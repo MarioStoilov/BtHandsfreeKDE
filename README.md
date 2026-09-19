@@ -12,6 +12,10 @@ Planned and in progress: dialpad with `tel:` link handling, contacts sync, messa
 The full feature list, how each maps onto the Bluetooth stack, and the known
 shortcomings are in [`SCOPE.md`](SCOPE.md).
 
+> **Full disclosure:** this is a vibe-coded app. I wanted my phone's calls on my
+> desktop and had an AI assistant write it with me, step by step, against a real phone.
+> It works for me. It may work for you too — but set your expectations accordingly.
+
 ## Requirements
 
 - PipeWire 1.4 or newer with the native Bluetooth HFP backend (the default; not oFono)
@@ -150,4 +154,5 @@ Coding standards and repository rules are in `CLAUDE.md`.
 
 ## License
 
-MIT, see `LICENSE`.
+[MIT](LICENSE). Use it, fork it, ship it — just keep the copyright notice
+(which points back to this repo) with your copies.
