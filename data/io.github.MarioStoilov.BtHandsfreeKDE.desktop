@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=BT Handsfree
+GenericName=Phone call controller
+Comment=Answer, reject and place phone calls over Bluetooth from the system tray
+Exec=bt-handsfree-kde
+Icon=io.github.MarioStoilov.BtHandsfreeKDE
+Terminal=false
+Categories=Utility;Telephony;Qt;KDE;
+Keywords=bluetooth;handsfree;hfp;phone;call;
+StartupNotify=false

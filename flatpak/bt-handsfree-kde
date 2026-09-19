@@ -1,0 +1,3 @@
+#!/bin/sh
+# Flatpak launcher: runs the installed package with the runtime's Python interpreter.
+exec python3 -m bt_handsfree_kde "$@"
