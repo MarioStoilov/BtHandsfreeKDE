@@ -135,6 +135,9 @@ The D-Bus surface the app consumes (verified against PipeWire 1.6 / WirePlumber 
 - `statusnotifier.py`: `StatusNotifierItemService` (`org.kde.StatusNotifierItem`,
   `ItemIsMenu = true`), watcher registration, icon pixmap rendering.
 - `dbusmenu.py`: `MenuItem`, `DBusMenuService` (`com.canonical.dbusmenu`).
+- `icons.py`: bundled icon path, `application_icon()` for windows, and
+  `application_icon_reference()` (theme name once installed, file path from a checkout)
+  for anything handed to other processes such as notifications.
 - `dbus_helpers.py`: `call_method`, `set_property`, `add_signal_match`,
   `name_has_owner`, `unwrap_variant`, `DBusRequestError`.
 - `resources/icon.svg`: bundled application icon, also installed as the hicolor icon.

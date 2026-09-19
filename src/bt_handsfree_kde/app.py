@@ -4,18 +4,16 @@ import asyncio
 import logging
 import time
 from collections.abc import Coroutine
-from importlib import resources
 from typing import Any
 
 from dbus_fast import BusType
 from dbus_fast.aio import MessageBus
 from PySide6.QtCore import QObject, QTimer
-from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
-from bt_handsfree_kde import APPLICATION_ID
 from bt_handsfree_kde.bluez import PhoneInfo, PhoneInfoClient
 from bt_handsfree_kde.call_window import CallWindow
+from bt_handsfree_kde.icons import application_icon
 from bt_handsfree_kde.notifications import (
     ANSWER_ACTION,
     REJECT_ACTION,
@@ -38,8 +36,6 @@ logger = logging.getLogger(__name__)
 
 # How often the duration shown for a call in progress is refreshed.
 CALL_STATUS_REFRESH_INTERVAL_MS = 1000
-# Package-relative location of the bundled application icon.
-BUNDLED_ICON_RESOURCE = "resources/icon.svg"
 # Which call the window shows when several exist: lower rank wins.
 CALL_WINDOW_PRIORITY = {
     CALL_STATE_ACTIVE: 0,
@@ -63,7 +59,7 @@ class HandsfreeApplication(QObject):
         """
         super().__init__(parent)
         self._qt_application = qt_application
-        self._qt_application.setWindowIcon(_application_icon())
+        self._qt_application.setWindowIcon(application_icon())
         self._session_bus: MessageBus | None = None
         self._telephony: TelephonyClient | None = None
         self._notifier: CallNotifier | None = None
@@ -106,7 +102,7 @@ class HandsfreeApplication(QObject):
         self._notifier = CallNotifier(self._session_bus, self)
         self._notifier.action_invoked.connect(self._on_notification_action)
 
-        self._tray = HandsfreeTray(self._session_bus, _application_icon(), self)
+        self._tray = HandsfreeTray(self._session_bus, application_icon(), self)
         self._tray.quit_requested.connect(self._qt_application.quit)
         self._tray.answer_requested.connect(self._answer_call)
         self._tray.reject_requested.connect(self._hangup_call)
@@ -403,14 +399,6 @@ class HandsfreeApplication(QObject):
             self._run(
                 self._notifier.show_information("Action failed", str(failure), URGENCY_NORMAL)
             )
-
-
-def _application_icon() -> QIcon:
-    """Return the installed theme icon for the app, falling back to the bundled SVG."""
-    icon_resource = resources.files("bt_handsfree_kde") / BUNDLED_ICON_RESOURCE
-    bundled_icon = QIcon(str(icon_resource))
-
-    return QIcon.fromTheme(APPLICATION_ID, bundled_icon)
 
 
 def _format_duration(elapsed_seconds: int) -> str:

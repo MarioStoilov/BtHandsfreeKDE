@@ -9,6 +9,7 @@ from PySide6.QtCore import QObject, Signal
 
 from bt_handsfree_kde import APPLICATION_ID, APPLICATION_NAME
 from bt_handsfree_kde.dbus_helpers import DBusRequestError, call_method
+from bt_handsfree_kde.icons import application_icon_reference
 
 logger = logging.getLogger(__name__)
 
@@ -33,8 +34,6 @@ URGENCY_CRITICAL = 2
 # Expiry values: never expire (call notifications) and server default (informational).
 NEVER_EXPIRE_MS = 0
 SERVER_DEFAULT_EXPIRY_MS = -1
-# Icon shown by the server for a ringing call (freedesktop icon naming specification).
-INCOMING_CALL_ICON = "call-incoming"
 
 
 class CallNotifier(QObject):
@@ -93,7 +92,6 @@ class CallNotifier(QObject):
         """Show (or refresh) the critical, non-expiring notification for a ringing call."""
         await self._show_for_call(
             call_path,
-            INCOMING_CALL_ICON,
             "Incoming call",
             caller_label,
             [ANSWER_ACTION, "Answer", REJECT_ACTION, "Reject"],
@@ -123,6 +121,7 @@ class CallNotifier(QObject):
     async def show_information(self, summary: str, body: str, urgency: int = URGENCY_LOW) -> None:
         """Show a plain informational notification with the server's default expiry."""
         hints = _hints(urgency, resident=False)
+        icon_reference = application_icon_reference()
 
         try:
             await call_method(
@@ -135,7 +134,7 @@ class CallNotifier(QObject):
                 [
                     APPLICATION_NAME,
                     0,
-                    APPLICATION_ID,
+                    icon_reference,
                     summary,
                     body,
                     [],
@@ -149,7 +148,6 @@ class CallNotifier(QObject):
     async def _show_for_call(
         self,
         call_path: str,
-        icon_name: str,
         summary: str,
         body: str,
         actions: list[str],
@@ -158,6 +156,7 @@ class CallNotifier(QObject):
         """Send a non-expiring, resident notification for a call, replacing any earlier one."""
         replaces_id = self._notification_id_by_call_path.get(call_path, 0)
         hints = _hints(urgency, resident=True)
+        icon_reference = application_icon_reference()
 
         try:
             reply_body = await call_method(
@@ -170,7 +169,7 @@ class CallNotifier(QObject):
                 [
                     APPLICATION_NAME,
                     replaces_id,
-                    icon_name,
+                    icon_reference,
                     summary,
                     body,
                     actions,
