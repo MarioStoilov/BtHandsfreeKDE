@@ -1,28 +1,54 @@
-"""System tray icon and its dropdown menu."""
+"""Tray icon and dropdown menu, served over the StatusNotifierItem and dbusmenu protocols."""
 
-from collections.abc import Callable
+import asyncio
+import logging
 from functools import partial
 
+from dbus_fast import Message, MessageType
+from dbus_fast.aio import MessageBus
 from PySide6.QtCore import QObject, Signal
-from PySide6.QtGui import QAction, QCursor, QIcon
-from PySide6.QtWidgets import QMenu, QSystemTrayIcon
+from PySide6.QtGui import QIcon
 
-from bt_handsfree_kde import APPLICATION_NAME
+from bt_handsfree_kde import APPLICATION_ID, APPLICATION_NAME
 from bt_handsfree_kde.bluez import PhoneInfo
+from bt_handsfree_kde.dbus_helpers import (
+    DBUS_DAEMON_BUS_NAME,
+    DBUS_DAEMON_INTERFACE,
+    add_signal_match,
+    name_has_owner,
+)
+from bt_handsfree_kde.dbusmenu import MENU_OBJECT_PATH, DBusMenuService, MenuItem
+from bt_handsfree_kde.statusnotifier import (
+    STATUS_ACTIVE,
+    STATUS_NEEDS_ATTENTION,
+    STATUS_NOTIFIER_ITEM_PATH,
+    WATCHER_BUS_NAME,
+    StatusNotifierItemService,
+    register_with_watcher,
+    render_icon_pixmaps,
+)
 from bt_handsfree_kde.telephony import (
     CALL_STATE_ACTIVE,
     CALL_STATE_HELD,
     MAX_VOLUME_LEVEL,
-    MIN_VOLUME_LEVEL,
     OUTGOING_PENDING_STATES,
     AudioGateway,
     Call,
 )
 
-# Theme icon names for the tray, from the freedesktop icon naming specification. Each
-# falls back to the next one, and finally to the bundled application icon.
-INCOMING_CALL_ICON_NAME = "call-incoming"
-ACTIVE_CALL_ICON_NAME = "call-start"
+logger = logging.getLogger(__name__)
+
+# Theme icon names (freedesktop icon naming specification, all present in Breeze).
+INCOMING_CALL_ICON = "call-incoming"
+ACTIVE_CALL_ICON = "call-start"
+ANSWER_ICON = "call-start"
+HANGUP_ICON = "call-stop"
+HOLD_ICON = "media-playback-pause"
+RESUME_ICON = "media-playback-start"
+PHONE_ICON = "smartphone"
+SPEAKER_ICON = "audio-volume-high"
+MICROPHONE_ICON = "audio-input-microphone"
+QUIT_ICON = "application-exit"
 # Text shown when PipeWire's telephony service is missing.
 SERVICE_UNAVAILABLE_TEXT = "PipeWire telephony service not available"
 # Text shown when the service runs but no phone is connected over HFP.
@@ -30,7 +56,7 @@ NO_PHONE_TEXT = "No phone connected"
 
 
 class HandsfreeTray(QObject):
-    """Owns the tray icon and rebuilds its menu from the current call and phone state."""
+    """Owns the tray item and menu servers and rebuilds the menu from the current state."""
 
     # Call actions; the argument is the call's object path.
     answer_requested = Signal(str)
@@ -38,34 +64,62 @@ class HandsfreeTray(QObject):
     hangup_requested = Signal(str)
     # Hold / resume acts on the gateway; the argument is the gateway's object path.
     hold_requested = Signal(str)
-    # Gateway settings: (gateway path, new value).
+    # Clicking a call entry brings the call window to the front for that call path.
+    call_focus_requested = Signal(str)
+    # Audio routing toggle: (gateway path, audio on this computer).
     audio_on_computer_toggled = Signal(str, bool)
-    speaker_volume_requested = Signal(str, int)
-    microphone_volume_requested = Signal(str, int)
+    # The volume entries open the settings window.
+    settings_requested = Signal()
     quit_requested = Signal()
 
-    def __init__(self, fallback_icon: QIcon, parent: QObject | None = None) -> None:
-        """Create and show the tray icon with an empty menu.
+    def __init__(
+        self, bus: MessageBus, fallback_icon: QIcon, parent: QObject | None = None
+    ) -> None:
+        """Create the servers; nothing is visible until `start` registers the item.
 
         Args:
-            fallback_icon: Icon used when the theme lacks the call icons and when idle.
+            bus: Connected session bus the servers are exported on.
+            fallback_icon: Bundled icon rendered to pixmaps when the theme lacks the app icon.
             parent: Optional Qt parent.
         """
         super().__init__(parent)
-        self._fallback_icon = fallback_icon
+        self._bus = bus
+        self._fallback_pixmaps = render_icon_pixmaps(fallback_icon)
         self._is_service_available = False
         self._gateways: list[AudioGateway] = []
         self._calls: list[Call] = []
         self._phone_info_by_address: dict[str, PhoneInfo] = {}
+        self._progress_text_by_call_path: dict[str, str] = {}
 
-        self._menu = QMenu()
-        self._tray_icon = QSystemTrayIcon(fallback_icon, self)
-        self._tray_icon.setToolTip(APPLICATION_NAME)
-        self._tray_icon.setContextMenu(self._menu)
-        self._tray_icon.activated.connect(self._on_activated)
+        self._menu_service = DBusMenuService()
+        self._item_service = StatusNotifierItemService(
+            APPLICATION_ID, APPLICATION_NAME, MENU_OBJECT_PATH
+        )
 
-        self._rebuild_menu()
-        self._tray_icon.show()
+    async def start(self) -> None:
+        """Export both servers, register with the watcher and follow watcher restarts.
+
+        Raises:
+            DBusRequestError: the bus daemon refused the signal subscription.
+        """
+        self._bus.export(MENU_OBJECT_PATH, self._menu_service)
+        self._bus.export(STATUS_NOTIFIER_ITEM_PATH, self._item_service)
+        self._apply_state()
+
+        self._bus.add_message_handler(self._handle_message)
+        await add_signal_match(
+            self._bus,
+            f"type='signal',sender='{DBUS_DAEMON_BUS_NAME}',interface='{DBUS_DAEMON_INTERFACE}',"
+            f"member='NameOwnerChanged',arg0='{WATCHER_BUS_NAME}'",
+        )
+
+        watcher_is_running = await name_has_owner(self._bus, WATCHER_BUS_NAME)
+        if watcher_is_running:
+            await register_with_watcher(self._bus)
+        else:
+            logger.warning(
+                "no StatusNotifierWatcher on the bus; the tray icon appears once one starts"
+            )
 
     def update_state(
         self,
@@ -73,6 +127,7 @@ class HandsfreeTray(QObject):
         gateways: list[AudioGateway],
         calls: list[Call],
         phone_info_by_address: dict[str, PhoneInfo],
+        progress_text_by_call_path: dict[str, str],
     ) -> None:
         """Replace the displayed state and redraw icon, tooltip and menu.
 
@@ -81,117 +136,205 @@ class HandsfreeTray(QObject):
             gateways: Connected phones as seen by the telephony service.
             calls: Current calls across all gateways.
             phone_info_by_address: BlueZ details keyed by upper-case Bluetooth address.
+            progress_text_by_call_path: Per call, its elapsed duration or dialing state.
         """
         self._is_service_available = is_service_available
         self._gateways = list(gateways)
         self._calls = list(calls)
         self._phone_info_by_address = dict(phone_info_by_address)
+        self._progress_text_by_call_path = dict(progress_text_by_call_path)
 
-        self._rebuild_menu()
-        self._update_icon_and_tooltip()
+        self._apply_state()
 
-    def show_error(self, text: str) -> None:
-        """Show a transient warning balloon from the tray icon."""
-        self._tray_icon.showMessage(APPLICATION_NAME, text, QSystemTrayIcon.MessageIcon.Warning)
+    def _handle_message(self, message: Message) -> None:
+        """Re-register when the watcher restarts; returns `None` so other handlers run too."""
+        is_owner_change = (
+            message.message_type == MessageType.SIGNAL
+            and message.interface == DBUS_DAEMON_INTERFACE
+            and message.member == "NameOwnerChanged"
+        )
+        if not is_owner_change:
+            return None
 
-    def _on_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
-        """Open the menu on a plain click; the right-click context menu is handled by Qt."""
-        if reason == QSystemTrayIcon.ActivationReason.Trigger:
-            cursor_position = QCursor.pos()
-            self._menu.popup(cursor_position)
+        changed_name = message.body[0]
+        new_owner = message.body[2]
+        watcher_appeared = changed_name == WATCHER_BUS_NAME and new_owner != ""
+        if watcher_appeared:
+            logger.info("StatusNotifierWatcher appeared, registering the tray icon")
+            asyncio.get_event_loop().create_task(register_with_watcher(self._bus))
 
-    def _rebuild_menu(self) -> None:
-        """Recreate every menu entry from the stored state."""
-        self._menu.clear()
+        return None
+
+    def _apply_state(self) -> None:
+        """Push menu, icon, status and tooltip derived from the stored state to the servers."""
+        menu_items = self._build_menu()
+        self._menu_service.set_items(menu_items)
+
+        has_incoming_call = any(call.is_incoming for call in self._calls)
+        has_any_call = bool(self._calls)
+        if has_incoming_call:
+            self._item_service.set_attention_icon(INCOMING_CALL_ICON)
+            self._item_service.set_icon(INCOMING_CALL_ICON, [])
+            self._item_service.set_status(STATUS_NEEDS_ATTENTION)
+        elif has_any_call:
+            self._item_service.set_icon(ACTIVE_CALL_ICON, [])
+            self._item_service.set_status(STATUS_ACTIVE)
+        else:
+            self._set_idle_icon()
+            self._item_service.set_status(STATUS_ACTIVE)
+
+        tooltip_text = self._tooltip_text()
+        self._item_service.set_tooltip(APPLICATION_NAME, tooltip_text)
+
+    def _set_idle_icon(self) -> None:
+        """Use the installed theme icon when present, otherwise the bundled pixmaps."""
+        theme_has_app_icon = QIcon.hasThemeIcon(APPLICATION_ID)
+
+        if theme_has_app_icon:
+            self._item_service.set_icon(APPLICATION_ID, [])
+        else:
+            self._item_service.set_icon("", self._fallback_pixmaps)
+
+    def _build_menu(self) -> list[MenuItem]:
+        """Create the menu tree for the stored state."""
+        quit_item = MenuItem("Quit", QUIT_ICON, on_activated=self.quit_requested.emit)
 
         if not self._is_service_available:
-            self._add_label(self._menu, SERVICE_UNAVAILABLE_TEXT)
-            self._menu.addSeparator()
-            self._add_action(self._menu, "Quit", self.quit_requested.emit)
-            return
+            return [
+                MenuItem(SERVICE_UNAVAILABLE_TEXT, enabled=False),
+                MenuItem.separator(),
+                quit_item,
+            ]
 
+        menu_items: list[MenuItem] = []
         if not self._gateways:
-            self._add_label(self._menu, NO_PHONE_TEXT)
-            self._menu.addSeparator()
+            menu_items.append(MenuItem(NO_PHONE_TEXT, enabled=False))
+            menu_items.append(MenuItem.separator())
 
         for gateway in self._gateways:
             header_text = self._phone_header(gateway)
-            self._add_label(self._menu, header_text)
+            header_key = f"phone:{gateway.path}"
+            menu_items.append(MenuItem(header_text, PHONE_ICON, key=header_key, enabled=False))
 
             for call in self._calls:
                 if call.gateway_path == gateway.path:
-                    self._add_call_entries(call)
+                    menu_items.extend(self._call_items(call))
 
-            self._add_gateway_settings(gateway)
-            self._menu.addSeparator()
+            menu_items.append(MenuItem.separator())
+            menu_items.extend(self._gateway_items(gateway))
+            menu_items.append(MenuItem.separator())
 
-        self._add_action(self._menu, "Quit", self.quit_requested.emit)
+        menu_items.append(quit_item)
 
-    def _add_call_entries(self, call: Call) -> None:
-        """Add the description and the applicable buttons for one call."""
+        return menu_items
+
+    def _call_items(self, call: Call) -> list[MenuItem]:
+        """Return the clickable description and the applicable actions for one call.
+
+        Keys carry the call path so the host updates the entries in place while the
+        duration ticks, instead of rebuilding the menu every second.
+        """
+        progress_text = self._progress_text_by_call_path.get(call.path, call.state)
+        focus_call = partial(self.call_focus_requested.emit, call.path)
+        description_key = f"call:{call.path}"
+        hangup_item = MenuItem(
+            "Hang up",
+            HANGUP_ICON,
+            key=f"hangup:{call.path}",
+            on_activated=partial(self.hangup_requested.emit, call.path),
+        )
+        toggle_hold = partial(self.hold_requested.emit, call.gateway_path)
+
         if call.is_incoming:
-            self._add_label(self._menu, f"Incoming: {call.caller_label}")
-            self._add_action(self._menu, "Answer", partial(self.answer_requested.emit, call.path))
-            self._add_action(self._menu, "Reject", partial(self.reject_requested.emit, call.path))
-            return
+            return [
+                MenuItem(
+                    f"Incoming: {call.caller_label}",
+                    INCOMING_CALL_ICON,
+                    key=description_key,
+                    on_activated=focus_call,
+                ),
+                MenuItem(
+                    "Answer",
+                    ANSWER_ICON,
+                    key=f"answer:{call.path}",
+                    on_activated=partial(self.answer_requested.emit, call.path),
+                ),
+                MenuItem(
+                    "Reject",
+                    HANGUP_ICON,
+                    key=f"reject:{call.path}",
+                    on_activated=partial(self.reject_requested.emit, call.path),
+                ),
+            ]
 
         if call.state in OUTGOING_PENDING_STATES:
-            self._add_label(self._menu, f"Calling: {call.caller_label}")
-        elif call.state == CALL_STATE_HELD:
-            self._add_label(self._menu, f"On hold: {call.caller_label}")
-            self._add_action(
-                self._menu, "Resume", partial(self.hold_requested.emit, call.gateway_path)
+            description = MenuItem(
+                f"Calling: {call.caller_label} · {progress_text}",
+                ACTIVE_CALL_ICON,
+                key=description_key,
+                on_activated=focus_call,
             )
-        elif call.state == CALL_STATE_ACTIVE:
-            self._add_label(self._menu, f"In call: {call.caller_label}")
-            self._add_action(
-                self._menu, "Hold", partial(self.hold_requested.emit, call.gateway_path)
+            return [description, hangup_item]
+
+        if call.state == CALL_STATE_HELD:
+            description = MenuItem(
+                f"On hold: {call.caller_label} · {progress_text}",
+                HOLD_ICON,
+                key=description_key,
+                on_activated=focus_call,
             )
-        else:
-            self._add_label(self._menu, f"{call.state}: {call.caller_label}")
+            resume_item = MenuItem(
+                "Resume", RESUME_ICON, key=f"hold:{call.path}", on_activated=toggle_hold
+            )
+            return [description, resume_item, hangup_item]
 
-        self._add_action(self._menu, "Hang up", partial(self.hangup_requested.emit, call.path))
+        if call.state == CALL_STATE_ACTIVE:
+            description = MenuItem(
+                f"In call: {call.caller_label} · {progress_text}",
+                ACTIVE_CALL_ICON,
+                key=description_key,
+                on_activated=focus_call,
+            )
+            hold_item = MenuItem(
+                "Hold", HOLD_ICON, key=f"hold:{call.path}", on_activated=toggle_hold
+            )
+            return [description, hold_item, hangup_item]
 
-    def _add_gateway_settings(self, gateway: AudioGateway) -> None:
-        """Add the audio routing toggle and the two volume submenus for one gateway."""
+        description = MenuItem(
+            f"{call.state}: {call.caller_label}", key=description_key, on_activated=focus_call
+        )
+        return [description, hangup_item]
+
+    def _gateway_items(self, gateway: AudioGateway) -> list[MenuItem]:
+        """Return the volume entries (which open settings) and the audio routing toggle."""
+        speaker_percent = volume_percent(gateway.speaker_volume)
+        microphone_percent = volume_percent(gateway.microphone_volume)
         audio_on_computer = not gateway.reject_sco
-        audio_action = QAction("Call audio on this computer", self._menu)
-        audio_action.setCheckable(True)
-        audio_action.setChecked(audio_on_computer)
-        audio_action.toggled.connect(partial(self.audio_on_computer_toggled.emit, gateway.path))
-        self._menu.addAction(audio_action)
-
-        self._add_volume_submenu(
-            "Speaker volume", gateway.path, gateway.speaker_volume, self.speaker_volume_requested
-        )
-        self._add_volume_submenu(
-            "Microphone volume",
-            gateway.path,
-            gateway.microphone_volume,
-            self.microphone_volume_requested,
+        toggle_audio = partial(
+            self.audio_on_computer_toggled.emit, gateway.path, not audio_on_computer
         )
 
-    def _add_volume_submenu(
-        self, title: str, gateway_path: str, current_level: int, level_signal: Signal
-    ) -> None:
-        """Add a submenu showing the current level with Louder and Quieter entries."""
-        volume_menu = self._menu.addMenu(title)
-        level_text = f"Level {current_level} / {MAX_VOLUME_LEVEL}"
-        self._add_label(volume_menu, level_text)
-
-        louder_level = current_level + 1
-        quieter_level = current_level - 1
-        can_go_louder = current_level < MAX_VOLUME_LEVEL
-        can_go_quieter = current_level > MIN_VOLUME_LEVEL
-
-        louder_action = self._add_action(
-            volume_menu, "Louder", partial(level_signal.emit, gateway_path, louder_level)
-        )
-        louder_action.setEnabled(can_go_louder)
-        quieter_action = self._add_action(
-            volume_menu, "Quieter", partial(level_signal.emit, gateway_path, quieter_level)
-        )
-        quieter_action.setEnabled(can_go_quieter)
+        return [
+            MenuItem(
+                f"Speaker {speaker_percent} %",
+                SPEAKER_ICON,
+                key=f"speaker:{gateway.path}",
+                on_activated=self.settings_requested.emit,
+            ),
+            MenuItem(
+                f"Microphone {microphone_percent} %",
+                MICROPHONE_ICON,
+                key=f"microphone:{gateway.path}",
+                on_activated=self.settings_requested.emit,
+            ),
+            MenuItem(
+                "Call audio on this computer",
+                key=f"audio:{gateway.path}",
+                checkable=True,
+                checked=audio_on_computer,
+                on_activated=toggle_audio,
+            ),
+        ]
 
     def _phone_header(self, gateway: AudioGateway) -> str:
         """Describe a gateway as phone name plus battery, falling back to its address."""
@@ -206,21 +349,10 @@ class HandsfreeTray(QObject):
 
         return f"{phone_info.alias} · {phone_info.battery_percentage} %"
 
-    def _update_icon_and_tooltip(self) -> None:
-        """Pick the icon for the current call state and summarise the state in the tooltip."""
-        has_incoming_call = any(call.is_incoming for call in self._calls)
-        has_any_call = bool(self._calls)
+    def _tooltip_text(self) -> str:
+        """Summarise service, phones and calls for the tooltip body."""
+        tooltip_lines: list[str] = []
 
-        active_icon = QIcon.fromTheme(ACTIVE_CALL_ICON_NAME, self._fallback_icon)
-        if has_incoming_call:
-            icon = QIcon.fromTheme(INCOMING_CALL_ICON_NAME, active_icon)
-        elif has_any_call:
-            icon = active_icon
-        else:
-            icon = self._fallback_icon
-        self._tray_icon.setIcon(icon)
-
-        tooltip_lines = [APPLICATION_NAME]
         if not self._is_service_available:
             tooltip_lines.append(SERVICE_UNAVAILABLE_TEXT)
         elif not self._gateways:
@@ -231,21 +363,11 @@ class HandsfreeTray(QObject):
         for call in self._calls:
             tooltip_lines.append(f"{call.state}: {call.caller_label}")
 
-        tooltip_text = "\n".join(tooltip_lines)
-        self._tray_icon.setToolTip(tooltip_text)
+        return "\n".join(tooltip_lines)
 
-    @staticmethod
-    def _add_label(menu: QMenu, text: str) -> QAction:
-        """Add a non-clickable entry used as a heading or status line."""
-        label_action = menu.addAction(text)
-        label_action.setEnabled(False)
 
-        return label_action
+def volume_percent(level: int) -> int:
+    """Convert an HFP gain level (0..15) to a rounded percentage."""
+    percent = round(level * 100 / MAX_VOLUME_LEVEL)
 
-    @staticmethod
-    def _add_action(menu: QMenu, text: str, handler: Callable[[], None]) -> QAction:
-        """Add a clickable entry that calls `handler` without arguments."""
-        action = menu.addAction(text)
-        action.triggered.connect(lambda _checked=False: handler())
-
-        return action
+    return percent

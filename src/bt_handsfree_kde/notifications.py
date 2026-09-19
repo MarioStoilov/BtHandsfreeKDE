@@ -17,17 +17,14 @@ NOTIFICATIONS_BUS_NAME = "org.freedesktop.Notifications"
 NOTIFICATIONS_PATH = "/org/freedesktop/Notifications"
 NOTIFICATIONS_INTERFACE = "org.freedesktop.Notifications"
 
-# Server capabilities the call notifications depend on; without them the application
-# falls back to the active-call window.
+# Server capabilities the incoming-call notification depends on; without them the
+# application shows the call window for ringing calls instead.
 ACTIONS_CAPABILITY = "actions"
 PERSISTENCE_CAPABILITY = "persistence"
 
 # Action keys sent back by the server when the user presses a button.
 ANSWER_ACTION = "answer"
 REJECT_ACTION = "reject"
-HOLD_ACTION = "hold"
-RESUME_ACTION = "resume"
-HANGUP_ACTION = "hangup"
 
 # Urgency levels defined by the notification specification.
 URGENCY_LOW = 0
@@ -36,15 +33,14 @@ URGENCY_CRITICAL = 2
 # Expiry values: never expire (call notifications) and server default (informational).
 NEVER_EXPIRE_MS = 0
 SERVER_DEFAULT_EXPIRY_MS = -1
-# Icon names shown by the server, from the freedesktop icon naming specification.
-INCOMING_CALL_ICON = "call-start"
-ACTIVE_CALL_ICON = "call-start"
+# Icon shown by the server for a ringing call (freedesktop icon naming specification).
+INCOMING_CALL_ICON = "call-incoming"
 
 
 class CallNotifier(QObject):
-    """Shows, updates and closes the notifications that belong to calls.
+    """Shows and closes the incoming-call notifications, plus informational ones.
 
-    Keeps one notification per call path so a state change replaces the previous
+    Keeps one notification per call path so a repeated show replaces the previous
     notification in place instead of stacking a new one.
     """
 
@@ -102,30 +98,6 @@ class CallNotifier(QObject):
             caller_label,
             [ANSWER_ACTION, "Answer", REJECT_ACTION, "Reject"],
             URGENCY_CRITICAL,
-        )
-
-    async def show_active_call(
-        self, call_path: str, caller_label: str, status_text: str, is_held: bool
-    ) -> None:
-        """Show (or refresh in place) the persistent notification for a call in progress.
-
-        Args:
-            call_path: Object path of the call.
-            caller_label: Name or number to display.
-            status_text: Second line, typically the elapsed duration or the dialing state.
-            is_held: When true the hold button reads Resume instead of Hold.
-        """
-        hold_label = "Resume" if is_held else "Hold"
-        hold_action = RESUME_ACTION if is_held else HOLD_ACTION
-        body_text = f"{caller_label}\n{status_text}"
-
-        await self._show_for_call(
-            call_path,
-            ACTIVE_CALL_ICON,
-            "Call in progress",
-            body_text,
-            [hold_action, hold_label, HANGUP_ACTION, "Hang up"],
-            URGENCY_NORMAL,
         )
 
     async def close_for_call(self, call_path: str) -> None:

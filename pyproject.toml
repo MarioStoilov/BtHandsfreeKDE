@@ -38,3 +38,9 @@ src = ["src"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+# dbus-fast declares D-Bus signatures as string annotations ("i", "as", ...), which ruff
+# would otherwise read as undefined forward references.
+"src/bt_handsfree_kde/dbusmenu.py" = ["F821", "F722", "UP037"]
+"src/bt_handsfree_kde/statusnotifier.py" = ["F821", "F722", "UP037"]

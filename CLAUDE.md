@@ -108,9 +108,11 @@ The D-Bus surface the app consumes (verified against PipeWire 1.6 / WirePlumber 
 - **`org.bluez.obex`** (session bus, obexd): `Client1.CreateSession` with target `pbap`
   (contacts, `PhonebookAccess1`) or `map` (messages, `MessageAccess1` / `Message1`).
   Details and platform caveats in `SCOPE.md`.
-- **Desktop integration**: `QSystemTrayIcon` (maps to StatusNotifierItem on Plasma);
-  `org.freedesktop.Notifications` with actions for incoming and active calls and new
-  messages, as specified in `SCOPE.md`.
+- **Desktop integration**: the app *serves* `org.kde.StatusNotifierItem` and
+  `com.canonical.dbusmenu` itself (see `SCOPE.md`, "Tray icon and menu") and *consumes*
+  `org.freedesktop.Notifications` for incoming calls and new messages.
+- **Properties set by the app are read back** after `Set`: PipeWire emits
+  `PropertiesChanged` for volumes but not for `RejectSCO`.
 
 ### Module layout (`src/bt_handsfree_kde/`)
 
@@ -121,10 +123,18 @@ The D-Bus surface the app consumes (verified against PipeWire 1.6 / WirePlumber 
 - `telephony.py`: `TelephonyClient` (**reference implementation** for the coding
   standards), `AudioGateway`, `Call`, call-state constants, `TelephonyError`.
 - `bluez.py`: `PhoneInfoClient`, `PhoneInfo` (alias, connected, battery).
-- `notifications.py`: `CallNotifier`; action keys; capability check.
-- `call_window.py`: `ActiveCallWindow`, shown only when the notification server lacks
-  actions or persistence.
-- `tray.py`: `HandsfreeTray`; rebuilds the whole menu from state on every update.
+- `notifications.py`: `CallNotifier`; incoming-call and informational notifications;
+  capability check.
+- `call_window.py`: `CallWindow`, always-on-top window for the shown call: icon buttons
+  (Answer / Reject or Hold / Hang up) and the collapsible DTMF dialpad.
+- `settings_window.py`: `SettingsWindow`, per-phone volume sliders, audio routing, codec.
+- `dtmf.py`: DTMF tone synthesis and `DtmfTonePlayer` (libpulse-simple via ctypes, one
+  short thread per key press).
+- `tray.py`: `HandsfreeTray`; builds the `MenuItem` tree and icon/tooltip/status from
+  state and pushes them to the two protocol servers.
+- `statusnotifier.py`: `StatusNotifierItemService` (`org.kde.StatusNotifierItem`,
+  `ItemIsMenu = true`), watcher registration, icon pixmap rendering.
+- `dbusmenu.py`: `MenuItem`, `DBusMenuService` (`com.canonical.dbusmenu`).
 - `dbus_helpers.py`: `call_method`, `set_property`, `add_signal_match`,
   `name_has_owner`, `unwrap_variant`, `DBusRequestError`.
 - `resources/icon.svg`: bundled application icon, also installed as the hicolor icon.

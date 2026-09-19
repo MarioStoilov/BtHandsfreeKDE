@@ -52,13 +52,17 @@ Desktop notifications, through `org.freedesktop.Notifications`, for every event 
 phone delivers over Bluetooth:
 
 - **Incoming call**: critical urgency, does not expire, actions Answer and Reject.
-- **Active call**: a persistent notification (resident, no expiry) showing caller name or
-  number and the running duration, with actions Hold and Hang up. The duration is
-  refreshed in place through the notification's `replaces_id`. If the notification server
-  reports no support for actions or persistence (`GetCapabilities`), the same content and
-  buttons are shown in a small always-on-top window instead. Hold maps to
-  `AudioGateway1.SwapCalls`, which places the lone active call on hold and resumes it on
-  the next press.
+- **Active call**: shown in the call window, not in a notification, because
+  notification buttons cannot carry icons or a dialpad. The window is small and always
+  on top: caller name or number, running duration, a Hold/Resume icon button (pause /
+  play), a red Hang up icon button (`call-stop`), and a Dialpad toggle that expands a
+  12-key DTMF pad, collapsed by default. Like a phone, each key press plays its
+  dual-tone locally (synthesised in `dtmf.py`, played through libpulse's simple API,
+  which PipeWire serves) and appends the key to a display above the pad; the tone the
+  far end hears is sent by the phone via `SendTones`. Hold maps to `AudioGateway1.SwapCalls`, which
+  places the lone active call on hold and resumes it on the next press. When the
+  notification server lacks actions or persistence (`GetCapabilities`), ringing calls
+  are shown in the same window with Answer and Reject instead of a notification.
 - **New message**: normal urgency, sender name (via contacts) or address and a text
   preview; an action opens the Messages window on that thread.
 - **Phone connected / disconnected** and **telephony service unavailable**: low urgency,
@@ -78,17 +82,26 @@ phone delivers over Bluetooth:
 
 - The icon reflects call state (idle, incoming, active). The tooltip shows the phone's
   name and battery percentage (`org.bluez.Battery1` on the phone's device object).
-- Clicking the icon opens a dropdown menu. Plasma renders tray menus through DBusMenu,
-  which supports plain items only, so the menu holds entries and each entry opens the
-  matching window:
+- Left and right click both open the same dropdown menu. Qt's tray class cannot do
+  this on Plasma (it hardcodes `ItemIsMenu = false` and opens its own popup, which
+  Wayland refuses), so the app implements the `org.kde.StatusNotifierItem` and
+  `com.canonical.dbusmenu` protocols itself (`statusnotifier.py`, `dbusmenu.py`). Plasma
+  renders the menu natively; entries can carry theme icons but no custom widgets, so
+  each entry opens the matching window:
   - the active or incoming call (caller, state) with Answer / Reject / Hold / Hang up
   - Dialpad
   - Messages
   - Contacts
-  - "Call audio on this computer" toggle (`AudioGatewayTransport1.RejectSCO` /
-    `Activate`), speaker and microphone volume
+  - "Speaker N %" and "Microphone N %" with speaker and microphone icons; clicking
+    either opens the settings window
+  - "Call audio on this computer" checkmark toggle (`AudioGatewayTransport1.RejectSCO`
+    / `Activate`)
   - Quit
-- The three windows are tabs of one window; a menu entry opens it on that tab.
+- The Dialpad, Messages and Contacts windows are tabs of one window; a menu entry opens
+  it on that tab.
+- **Settings window**: one group per connected phone with a speaker slider and a
+  microphone slider over the HFP gain range (0–15, shown as %), the audio routing
+  checkbox and the negotiated codec while an audio link is open.
 
 ## Known shortcomings
 

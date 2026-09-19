@@ -495,7 +495,7 @@ class TelephonyClient(QObject):
     async def _set_gateway_property(
         self, gateway_path: str, interface: str, property_name: str, value: Variant
     ) -> None:
-        """Set a property on a known gateway, translating failures.
+        """Set a property on a known gateway, read it back and update the local copy.
 
         Raises:
             TelephonyError: the gateway is unknown or the service rejected the value.
@@ -507,8 +507,23 @@ class TelephonyClient(QObject):
             await set_property(
                 self._bus, TELEPHONY_BUS_NAME, gateway_path, interface, property_name, value
             )
+            reply_body = await call_method(
+                self._bus,
+                TELEPHONY_BUS_NAME,
+                gateway_path,
+                PROPERTIES_INTERFACE,
+                "Get",
+                "ss",
+                [interface, property_name],
+            )
         except DBusRequestError as request_error:
             raise TelephonyError(str(request_error)) from request_error
+
+        # The service does not emit PropertiesChanged for every property it lets us set
+        # (RejectSCO is silent, SpeakerVolume is not), so the value is read back and
+        # applied locally as if the signal had arrived.
+        applied_value = unwrap_variant(reply_body[0])
+        self._on_properties_changed(gateway_path, [interface, {property_name: applied_value}, []])
 
 
 def _clamp_volume(level: int) -> int:
