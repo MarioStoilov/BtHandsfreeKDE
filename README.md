@@ -198,11 +198,17 @@ the app's own cache directory, which every Flatpak may write.
 
 ```bash
 uv run ruff format && uv run ruff check
+uv run pytest                            # unit, offscreen widget and D-Bus integration tests
 flatpak run --command=flatpak-builder-lint org.flatpak.Builder manifest flatpak/io.github.MarioStoilov.BtHandsfreeKDE.yml
 busctl --user call org.pipewire.Telephony /org/pipewire/Telephony org.freedesktop.DBus.ObjectManager GetManagedObjects
 busctl --user call io.github.MarioStoilov.BtHandsfreeKDE /io/github/MarioStoilov/BtHandsfreeKDE \
        io.github.MarioStoilov.BtHandsfreeKDE ShowDialpad s "+15550100"   # what a tel: launch does
 ```
+
+The integration tests start a private `dbus-daemon` (from the `dbus` package every
+desktop already has) and export fake PipeWire, BlueZ, obexd and notification services on
+it, so they need neither a phone nor the real services. The Flatpak build runs the same
+suite inside the build sandbox.
 
 Coding standards and repository rules are in `CLAUDE.md`.
 

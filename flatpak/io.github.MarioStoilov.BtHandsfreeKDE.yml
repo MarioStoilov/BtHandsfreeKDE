@@ -33,12 +33,24 @@ cleanup-commands:
   - /app/cleanup-BaseApp.sh
 modules:
   - python3-requirements.json
+  # pytest and its dependencies, present at build time only: the module's cleanup removes
+  # them from the installed app after the test run below.
+  - python3-test-requirements.json
   - name: bt-handsfree-kde
     buildsystem: simple
     build-commands:
-      - site_packages=$(python3 -c "import sysconfig; print(sysconfig.get_path('purelib', vars={'base': '${FLATPAK_DEST}'}))")
+      # Folded block scalars: the commands contain `: ` inside quotes, which a plain YAML
+      # scalar cannot hold.
+      - >-
+        site_packages=$(python3 -c "import sysconfig; print(sysconfig.get_path('purelib', vars={'base': '${FLATPAK_DEST}'}))")
         && install -d "${site_packages}"
         && cp -r src/bt_handsfree_kde "${site_packages}/"
+      # The test suite runs against the installed copy inside the build sandbox; the
+      # integration tests start their own dbus-daemon and Qt renders offscreen, so the
+      # build needs no session bus and no display.
+      - >-
+        site_packages=$(python3 -c "import sysconfig; print(sysconfig.get_path('purelib', vars={'base': '${FLATPAK_DEST}'}))")
+        && PYTHONPATH="${site_packages}" python3 -m pytest -p no:cacheprovider tests
       - install -Dm755 flatpak/bt-handsfree-kde ${FLATPAK_DEST}/bin/bt-handsfree-kde
       - install -Dm644 data/${FLATPAK_ID}.desktop -t ${FLATPAK_DEST}/share/applications
       - install -Dm644 data/${FLATPAK_ID}.metainfo.xml -t ${FLATPAK_DEST}/share/metainfo

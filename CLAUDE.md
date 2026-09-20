@@ -79,6 +79,7 @@ are listed here:
 ```bash
 uv sync                                         # installs the package + dev tools
 uv run ruff format && uv run ruff check
+uv run pytest                                   # unit, offscreen widget and private-bus integration tests
 uv run bt-handsfree                             # run from the working tree (host, outside the sandbox)
 flatpak-builder --user --install --force-clean build-dir flatpak/io.github.MarioStoilov.BtHandsfreeKDE.yml
 flatpak run io.github.MarioStoilov.BtHandsfreeKDE
@@ -200,11 +201,25 @@ Clients talk raw D-Bus messages (`call_method`) plus one `AddMatch` rule per int
 and a single message handler, rather than introspected proxies per object: objects come
 and go quickly during calls and this avoids racing introspection against removal.
 
+### Tests (`tests/`)
+
+Three layers, all run by `uv run pytest` and by the Flatpak build. `unit/` covers the
+pure modules with no bus and no widgets. `widgets/` builds the pages, windows and the
+tray's menu tree under the offscreen Qt platform (`widgets/conftest.py` sets it up).
+`integration/` starts one private `dbus-daemon` per run (`conftest.py`), points both the
+session and the system bus at it, exports the fakes in `fakes/` (`org.pipewire.Telephony`,
+`org.bluez`, `org.bluez.obex`, `org.freedesktop.Notifications`, the StatusNotifier
+watcher) and drives the real clients and servers through them. Fakes record the requests
+they receive and let a test add, change and remove objects; they never touch a real
+service. A fake's Python attribute names must not collide with dbus-fast's
+`ServiceInterface` attributes (`name`, `introspection`), so a D-Bus property called `Name`
+is served by a getter with another Python name.
+
 ## Coding standards
 
-Enforced in review. They apply to Python, shell scripts, inline helper scripts and (when
-they exist) tests alike. When a file is touched, the whole file is brought up to these
-standards in the same change.
+Enforced in review. They apply to Python, shell scripts, inline helper scripts and tests
+alike. When a file is touched, the whole file is brought up to these standards in the
+same change.
 
 ### 1. Names
 
@@ -306,7 +321,11 @@ async def answer_call(self, call_path: str) -> None:
 ## Conventions
 
 - Verify each change by running the app against the live phone (host run for logic,
-  Flatpak run for sandbox permissions) and state the observed outcome. Whether and when
-  automated tests are introduced is decided when the D-Bus client layer is stable.
+  Flatpak run for sandbox permissions) and state the observed outcome.
+- Every change comes with its tests, in the layer that fits: a pure function gets a unit
+  test, a widget an offscreen widget test, a D-Bus client or server an integration test
+  against the fakes. A fake grows in the same change as the client behaviour it has to
+  provoke. `uv run pytest` is green before a change is reported done; the Flatpak build
+  runs the same suite, so a test that needs the host's real services is not written.
 - Runtime and BaseApp versions in the Flatpak manifest are pinned. Bumps are deliberate
   changes with their own commit.

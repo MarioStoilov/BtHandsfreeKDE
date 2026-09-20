@@ -28,13 +28,15 @@ packages = ["src/bt_handsfree_kde"]
 
 [dependency-groups]
 dev = [
+  "pytest>=8",
+  "pytest-asyncio>=0.24",
   "ruff>=0.6",
 ]
 
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-src = ["src"]
+src = ["src", "."]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
@@ -45,3 +47,9 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 "src/bt_handsfree_kde/dbus/dbusmenu.py" = ["F821", "F722", "UP037"]
 "src/bt_handsfree_kde/dbus/instance.py" = ["F821", "F722", "UP037"]
 "src/bt_handsfree_kde/dbus/statusnotifier.py" = ["F821", "F722", "UP037"]
+"tests/fakes/*.py" = ["F821", "F722", "UP037"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
