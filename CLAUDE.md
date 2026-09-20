@@ -126,49 +126,62 @@ The D-Bus surface the app consumes (verified against PipeWire 1.6 / WirePlumber 
 
 Three layers: the `dbus/` package holds everything that speaks a D-Bus protocol and
 creates no widgets; the `contacts/` package holds the phonebook feature's non-UI parts;
-the `ui/` package holds the windows, tabs and tray. The package root keeps the wiring
+the `messages/` package the same for messages; the `ui/` package holds the windows,
+tabs and tray. The package root keeps the wiring
 (`app.py`, `__main__.py`) and the small modules every layer shares (`icons.py`,
 `phone_numbers.py`, `dtmf.py`). A new D-Bus client or server goes into `dbus/`, a new
 widget into `ui/`, and a feature that grows beyond one module gets its own package like
 `contacts/`. `ui/` may import from `dbus/` and the feature packages for their data
-types; nothing imports from `ui/` except `app.py`.
+types; nothing imports from `ui/` except `app.py`. Feature packages talk to obexd only
+through `dbus/obex.py`.
 
 - `__init__.py`: `APPLICATION_ID`, `APPLICATION_NAME`, `__version__`.
 - `__main__.py`: argument parsing (`tel:` URIs), `QApplication`, qasync event loop, runs
   `HandsfreeApplication` and returns its exit code.
 - `app.py`: `HandsfreeApplication`, the only place that wires clients to UI; claims the
   single instance or hands the launch over and quits; owns the call-duration timer,
-  decides between call notifications and the fallback window, and fills caller names in
-  from the phonebooks before a call reaches any view.
+  decides between call notifications and the fallback window, fills caller names in
+  from the phonebooks before a call reaches any view, groups messages into
+  conversations, and turns pushed messages into notifications.
 - `dbus/helpers.py`: `call_method`, `set_property`, `add_signal_match`,
   `name_has_owner`, `unwrap_variant`, `DBusRequestError` (carries the D-Bus error name).
 - `dbus/telephony.py`: `TelephonyClient` (**reference implementation** for the coding
   standards), `AudioGateway`, `Call`, call-state constants, `TelephonyError`.
 - `dbus/bluez.py`: `PhoneInfoClient`, `PhoneInfo` (alias, connected, battery).
-- `dbus/notifications.py`: `CallNotifier`; incoming-call and informational
-  notifications; capability check.
+- `dbus/notifications.py`: `DesktopNotifier`; incoming-call, new-message and
+  informational notifications; capability check.
+- `dbus/obex.py`: `ObexClient` (sessions, calls on session objects, transfer waiting,
+  `object_added` / `object_removed` for objects below the app's sessions),
+  `ObexError`, `obex_transfer_directory`. The only module that names `org.bluez.obex`.
 - `dbus/statusnotifier.py`: `StatusNotifierItemService` (`org.kde.StatusNotifierItem`,
   `ItemIsMenu = true`), watcher registration, icon pixmap rendering.
 - `dbus/dbusmenu.py`: `MenuItem`, `DBusMenuService` (`com.canonical.dbusmenu`).
 - `dbus/instance.py`: `SingleInstance`, `InstanceService` (`ShowDialpad`) on the app's
   own bus name; the hand-off call a second launch makes.
-- `contacts/client.py`: `ContactsClient` (PBAP pull through obexd, one phonebook per
-  phone, transfer tracking), `PhonebookState`, sync-state constants, `ContactsError`,
-  `phonebook_cache_directory`.
-- `contacts/phonebook.py`: `Phonebook` (name lookup by number), `digits_of`, the
-  number-matching rule.
+- `contacts/client.py`: `ContactsClient` (PBAP pull, one phonebook per phone),
+  `PhonebookState`, sync-state constants, `ContactsError`.
+- `contacts/phonebook.py`: `Phonebook` (name lookup by number).
 - `contacts/vcard.py`: `parse_contacts` for vCard 2.1 / 3.0 text, `Contact`,
   `PhoneNumber`.
+- `messages/client.py`: `MessagesClient` (one open MAP session per phone, listing,
+  pushed messages, full-text fetch, mark read), `MessagesState`, sync-state constants,
+  `MessagesError`.
+- `messages/message.py`: `TextMessage`, `message_from_properties`, `parse_timestamp`.
+- `messages/bmessage.py`: `parse_bmessage` (read flag, originator number, text).
+- `messages/conversations.py`: `Conversation`, `group_conversations`, `conversation_key`.
 - `ui/call_window.py`: `CallWindow`, always-on-top window for the shown call: icon buttons
   (Answer / Reject or Hold / Hang up) and the collapsible DTMF dialpad.
-- `ui/main_window.py`: `MainWindow`, phone chooser (several phones only) above the Dialpad
-  and Contacts tabs; pushes the chosen phone's state to each tab.
+- `ui/main_window.py`: `MainWindow`, phone chooser (several phones only) above the
+  Dialpad, Contacts and Messages tabs; pushes the chosen phone's state to each tab.
 - `ui/dialpad_page.py`: `DialpadPage`, number field, keypad and Call button; keys send DTMF
   while the chosen phone has an active call.
 - `ui/contacts_page.py`: `ContactsPage`, search, contact list, Call (with a number menu for
   contacts that have several), Refresh and the sync status line.
+- `ui/messages_page.py`: `MessagesPage`, conversation list, thread view, Refresh and
+  the sync status line; announces opened conversations.
 - `ui/keypad.py`: the 12-key grid and its font, shared by the call window and the dialpad.
-- `phone_numbers.py`: `dial_string_from_text`, `number_from_tel_uri` (RFC 3966).
+- `phone_numbers.py`: `dial_string_from_text`, `number_from_tel_uri` (RFC 3966),
+  `digits_of`, `same_number` (national vs international matching rule).
 - `ui/settings_window.py`: `SettingsWindow`, per-phone volume sliders, audio routing, codec.
 - `dtmf.py`: DTMF tone synthesis and `DtmfTonePlayer` (libpulse-simple via ctypes, one
   short thread per key press).

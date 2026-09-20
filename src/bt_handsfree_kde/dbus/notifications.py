@@ -1,4 +1,4 @@
-"""Desktop notifications for calls through `org.freedesktop.Notifications`."""
+"""Desktop notifications for calls and messages through `org.freedesktop.Notifications`."""
 
 import logging
 from typing import Any
@@ -26,6 +26,10 @@ PERSISTENCE_CAPABILITY = "persistence"
 # Action keys sent back by the server when the user presses a button.
 ANSWER_ACTION = "answer"
 REJECT_ACTION = "reject"
+OPEN_MESSAGE_ACTION = "open-message"
+# Notification category hints (notification specification) for the server's grouping.
+INCOMING_CALL_CATEGORY = "call.incoming"
+RECEIVED_MESSAGE_CATEGORY = "im.received"
 
 # Urgency levels defined by the notification specification.
 URGENCY_LOW = 0
@@ -36,22 +40,23 @@ NEVER_EXPIRE_MS = 0
 SERVER_DEFAULT_EXPIRY_MS = -1
 
 
-class CallNotifier(QObject):
-    """Shows and closes the incoming-call notifications, plus informational ones.
+class DesktopNotifier(QObject):
+    """Shows and closes incoming-call and new-message notifications, plus informational ones.
 
-    Keeps one notification per call path so a repeated show replaces the previous
-    notification in place instead of stacking a new one.
+    Notifications with buttons are keyed by the caller's subject (a call path, a message
+    path), so a repeated show for the same key replaces the previous notification in
+    place instead of stacking a new one.
     """
 
-    # Emitted with (call path, action key) when the user presses a notification button.
+    # Emitted with (subject key, action key) when the user presses a notification button.
     action_invoked = Signal(str, str)
 
     def __init__(self, bus: MessageBus, parent: QObject | None = None) -> None:
         """Create a notifier bound to an already connected session bus."""
         super().__init__(parent)
         self._bus = bus
-        self._notification_id_by_call_path: dict[str, int] = {}
-        self._call_path_by_notification_id: dict[int, str] = {}
+        self._notification_id_by_key: dict[str, int] = {}
+        self._key_by_notification_id: dict[int, str] = {}
         self._supports_actions = False
         self._supports_persistence = False
 
@@ -90,21 +95,47 @@ class CallNotifier(QObject):
 
     async def show_incoming_call(self, call_path: str, caller_label: str) -> None:
         """Show (or refresh) the critical, non-expiring notification for a ringing call."""
-        await self._show_for_call(
+        await self._show_with_actions(
             call_path,
             "Incoming call",
             caller_label,
             [ANSWER_ACTION, "Answer", REJECT_ACTION, "Reject"],
             URGENCY_CRITICAL,
+            INCOMING_CALL_CATEGORY,
+            resident=True,
+            expiry_ms=NEVER_EXPIRE_MS,
+        )
+
+    async def show_new_message(self, message_path: str, sender_label: str, preview: str) -> None:
+        """Show a normal-urgency notification for a received message with an Open button.
+
+        Args:
+            message_path: Key the `action_invoked` signal reports for the Open button.
+            sender_label: Contact name or address of the sender.
+            preview: Start of the message text.
+        """
+        await self._show_with_actions(
+            message_path,
+            sender_label,
+            preview,
+            [OPEN_MESSAGE_ACTION, "Open"],
+            URGENCY_NORMAL,
+            RECEIVED_MESSAGE_CATEGORY,
+            resident=False,
+            expiry_ms=SERVER_DEFAULT_EXPIRY_MS,
         )
 
     async def close_for_call(self, call_path: str) -> None:
         """Close the notification that belongs to `call_path`, if there is one."""
-        notification_id = self._notification_id_by_call_path.pop(call_path, None)
+        await self.close_for_key(call_path)
+
+    async def close_for_key(self, key: str) -> None:
+        """Close the notification shown for `key`, if there is one."""
+        notification_id = self._notification_id_by_key.pop(key, None)
         if notification_id is None:
             return
 
-        self._call_path_by_notification_id.pop(notification_id, None)
+        self._key_by_notification_id.pop(notification_id, None)
         try:
             await call_method(
                 self._bus,
@@ -120,7 +151,7 @@ class CallNotifier(QObject):
 
     async def show_information(self, summary: str, body: str, urgency: int = URGENCY_LOW) -> None:
         """Show a plain informational notification with the server's default expiry."""
-        hints = _hints(urgency, resident=False)
+        hints = _hints(urgency, resident=False, category="")
         icon_reference = application_icon_reference()
 
         try:
@@ -145,17 +176,31 @@ class CallNotifier(QObject):
         except DBusRequestError as request_error:
             logger.debug("informational notification failed: %s", request_error)
 
-    async def _show_for_call(
+    async def _show_with_actions(
         self,
-        call_path: str,
+        key: str,
         summary: str,
         body: str,
         actions: list[str],
         urgency: int,
+        category: str,
+        resident: bool,
+        expiry_ms: int,
     ) -> None:
-        """Send a non-expiring, resident notification for a call, replacing any earlier one."""
-        replaces_id = self._notification_id_by_call_path.get(call_path, 0)
-        hints = _hints(urgency, resident=True)
+        """Send a notification with buttons for `key`, replacing an earlier one for it.
+
+        Args:
+            key: Subject the buttons act on, reported back through `action_invoked`.
+            summary: Title line.
+            body: Text below the title.
+            actions: Alternating action keys and button labels.
+            urgency: One of the `URGENCY_*` values.
+            category: Notification category hint.
+            resident: Whether the notification stays after a button was pressed.
+            expiry_ms: Timeout, `NEVER_EXPIRE_MS` or `SERVER_DEFAULT_EXPIRY_MS`.
+        """
+        replaces_id = self._notification_id_by_key.get(key, 0)
+        hints = _hints(urgency, resident, category)
         icon_reference = application_icon_reference()
 
         try:
@@ -174,41 +219,51 @@ class CallNotifier(QObject):
                     body,
                     actions,
                     hints,
-                    NEVER_EXPIRE_MS,
+                    expiry_ms,
                 ],
             )
         except DBusRequestError as request_error:
-            logger.warning("call notification failed: %s", request_error)
+            logger.warning("notification with actions failed: %s", request_error)
             return
 
         notification_id = int(reply_body[0])
-        self._notification_id_by_call_path[call_path] = notification_id
-        self._call_path_by_notification_id[notification_id] = call_path
+        self._notification_id_by_key[key] = notification_id
+        self._key_by_notification_id[notification_id] = key
 
     def _on_action_invoked(self, notification_id: int, action_key: str) -> None:
-        """Translate a pressed notification button into a call action signal."""
-        call_path = self._call_path_by_notification_id.get(notification_id)
-        if call_path is None:
+        """Translate a pressed notification button into an action signal for its key."""
+        key = self._key_by_notification_id.get(notification_id)
+        if key is None:
             return
 
         logger.info("notification action %s", action_key)
-        self.action_invoked.emit(call_path, action_key)
+        self.action_invoked.emit(key, action_key)
 
     def _on_notification_closed(self, notification_id: int, reason: int) -> None:
         """Forget the mapping of a notification the server or the user closed."""
-        call_path = self._call_path_by_notification_id.pop(notification_id, None)
-        if call_path is None:
+        key = self._key_by_notification_id.pop(notification_id, None)
+        if key is None:
             return
 
-        known_id = self._notification_id_by_call_path.get(call_path)
+        known_id = self._notification_id_by_key.get(key)
         if known_id == notification_id:
-            del self._notification_id_by_call_path[call_path]
+            del self._notification_id_by_key[key]
 
 
-def _hints(urgency: int, resident: bool) -> dict[str, Any]:
-    """Build the hints dictionary shared by every notification the app sends."""
-    return {
+def _hints(urgency: int, resident: bool, category: str) -> dict[str, Any]:
+    """Build the hints dictionary shared by every notification the app sends.
+
+    Args:
+        urgency: One of the `URGENCY_*` values.
+        resident: Whether the notification stays after a button was pressed.
+        category: Notification category hint; empty to send none.
+    """
+    hints = {
         "urgency": Variant("y", urgency),
         "desktop-entry": Variant("s", APPLICATION_ID),
         "resident": Variant("b", resident),
     }
+    if category:
+        hints["category"] = Variant("s", category)
+
+    return hints

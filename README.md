@@ -9,12 +9,14 @@ link anywhere on the desktop opens it with the number filled in, and while a cal
 its keys send DTMF tones. The Contacts tab lists the phone's contacts, read over
 Bluetooth each time the phone connects, with search and a Call button; the same list
 supplies caller names for incoming calls, which the hands-free profile itself does not
-carry. The tray icon opens the same menu on left and right click: the current call,
-speaker and microphone levels (which open the settings window with sliders), a toggle
-for where call audio plays, the dialpad, the contacts, and the phone's battery level
-next to its name.
+carry. The Messages tab shows the newest SMS conversations from the phone; a new
+message arrives as a notification with an Open button, and opening a conversation marks
+it read on the phone. The tray icon opens the same menu on left and right click: the
+current call, speaker and microphone levels (which open the settings window with
+sliders), a toggle for where call audio plays, the dialpad, contacts and messages, and
+the phone's battery level next to its name.
 
-Planned and in progress: messages.
+Planned: sending messages.
 The full feature list, how each maps onto the Bluetooth stack, and the known
 shortcomings are in [`SCOPE.md`](SCOPE.md).
 
@@ -27,8 +29,8 @@ shortcomings are in [`SCOPE.md`](SCOPE.md).
 - PipeWire 1.4 or newer with the native Bluetooth HFP backend (the default; not oFono)
   and its telephony D-Bus service enabled (default). The app is a client of
   `org.pipewire.Telephony`; it never touches audio itself.
-- BlueZ, with obexd (`bluez-obexd`) for contacts; messages (planned) will use it too.
-  Without obexd, calls work and the Contacts tab says what is missing.
+- BlueZ, with obexd (`bluez-obexd`) for contacts and messages. Without obexd, calls
+  work and those two tabs say what is missing.
 - A desktop with a StatusNotifierItem tray and a freedesktop notification server.
   Developed and tested on KDE Plasma 6.
 - Your phone paired and connected with the hands-free profile.
@@ -72,7 +74,7 @@ sudo pacman -S pipewire pipewire-audio wireplumber bluez bluez-obex xcb-util-cur
 
 The PipeWire Bluetooth plugin lives in `libspa-0.2-bluetooth` (Debian/Ubuntu),
 `pipewire-libs` (Fedora) and `pipewire-audio` (Arch). `bluez-obexd` / `bluez-obex`
-provides the contacts feature; the bus starts it on demand.
+provides the contacts and messages features; the bus starts it on demand.
 
 ### 2. uv
 
@@ -148,6 +150,17 @@ directory (`~/.cache/io.github.MarioStoilov.BtHandsfreeKDE`, or the app's own ca
 directory in the Flatpak); the file is deleted as soon as it has been parsed. Only
 names and telephone numbers are requested, never photos or addresses.
 
+### Messages
+
+Messages use the same obexd service. The phone asks once whether to allow message
+access for this computer (Android); on an iPhone, enable "Show Notifications" for the
+computer in its Bluetooth settings, which is the only way iOS exposes messages, and
+only for SMS and iMessage text. The app reads the 25 newest messages of the inbox and
+the sent folder when the phone connects, keeps a connection open so new messages are
+pushed as they arrive, and shows each new one as a notification. Opening a conversation
+marks its messages as read on the phone. Nothing is stored on disk beyond the transfer
+file of a fetched message, which is deleted after parsing.
+
 ### Local Flatpak build
 
 ```bash
@@ -166,15 +179,15 @@ and commit instead.
 | --- | --- |
 | `--talk-name=org.pipewire.Telephony` | Call state and call control from PipeWire |
 | `--own-name=io.github.MarioStoilov.BtHandsfreeKDE` | Single instance: a second launch (a `tel:` link) hands its number to the running app |
-| `--talk-name=org.bluez.obex` | Contacts: phonebook download through obexd |
+| `--talk-name=org.bluez.obex` | Contacts and messages through obexd |
 | `--talk-name=org.kde.StatusNotifierWatcher` | Tray icon |
 | `--talk-name=org.freedesktop.Notifications` | Call notifications with buttons |
 | `--system-talk-name=org.bluez` | Phone name, connection state, battery |
 | `--socket=wayland`, `--socket=fallback-x11`, `--share=ipc` | Windows |
 | `--socket=pulseaudio` | Dialpad key tones (call audio itself never passes through the app) |
 
-No network or filesystem access is requested; the phonebook transfer file lands in the
-app's own cache directory, which every Flatpak may write.
+No network or filesystem access is requested; the transfer files obexd writes land in
+the app's own cache directory, which every Flatpak may write.
 
 ## Development
 

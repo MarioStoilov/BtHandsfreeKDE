@@ -15,8 +15,9 @@
       Reject buttons, and the tray menu lets you hang up, dial a number, call a contact,
       send DTMF tones, adjust call volume and choose whether call audio plays on the
       computer or stays on the phone. Contacts are read from the phone over Bluetooth
-      and also name the callers of incoming calls. The phone's battery level is shown
-      alongside its name.
+      and also name the callers of incoming calls; text messages arrive as notifications
+      and can be read in conversations. The phone's battery level is shown alongside
+      its name.
     </p>
     <p>
       The app relies on PipeWire's native Bluetooth hands-free support and its telephony
@@ -53,8 +54,8 @@
     <release version="0.1.0" date="2026-09-19">
       <description>
         <p>First release: incoming-call notifications, answer, reject, hang up, dial,
-          contacts with caller ID, DTMF tones, call volume, audio routing and phone
-          battery in the tray.</p>
+          contacts with caller ID, text messages with notifications, DTMF tones, call
+          volume, audio routing and phone battery in the tray.</p>
       </description>
     </release>
   </releases>

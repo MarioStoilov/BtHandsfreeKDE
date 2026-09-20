@@ -12,16 +12,21 @@ from dbus_fast.aio import MessageBus
 from PySide6.QtCore import QObject, QTimer
 from PySide6.QtWidgets import QApplication
 
-from bt_handsfree_kde.contacts.client import AUTOMATIC_SYNC_DELAY_S, ContactsClient, PhonebookState
+from bt_handsfree_kde.contacts.client import (
+    AUTOMATIC_SYNC_DELAY_S as CONTACTS_SYNC_DELAY_S,
+)
+from bt_handsfree_kde.contacts.client import ContactsClient, PhonebookState
 from bt_handsfree_kde.dbus.bluez import PhoneInfo, PhoneInfoClient
 from bt_handsfree_kde.dbus.helpers import DBusRequestError
 from bt_handsfree_kde.dbus.instance import SingleInstance
 from bt_handsfree_kde.dbus.notifications import (
     ANSWER_ACTION,
+    OPEN_MESSAGE_ACTION,
     REJECT_ACTION,
     URGENCY_NORMAL,
-    CallNotifier,
+    DesktopNotifier,
 )
+from bt_handsfree_kde.dbus.obex import ObexClient
 from bt_handsfree_kde.dbus.telephony import (
     CALL_STATE_ACTIVE,
     CALL_STATE_ALERTING,
@@ -32,6 +37,12 @@ from bt_handsfree_kde.dbus.telephony import (
     TelephonyClient,
 )
 from bt_handsfree_kde.icons import application_icon
+from bt_handsfree_kde.messages.client import (
+    AUTOMATIC_SYNC_DELAY_S as MESSAGES_SYNC_DELAY_S,
+)
+from bt_handsfree_kde.messages.client import MessagesClient, MessagesState
+from bt_handsfree_kde.messages.conversations import Conversation, group_conversations
+from bt_handsfree_kde.messages.message import TextMessage
 from bt_handsfree_kde.phone_numbers import number_from_tel_uri
 from bt_handsfree_kde.ui.call_window import CallWindow
 from bt_handsfree_kde.ui.main_window import MainWindow
@@ -53,6 +64,10 @@ CALL_WINDOW_PRIORITY = {
 LOWEST_CALL_PRIORITY = 3
 # Process exit code when a second launch could not reach the running instance.
 HANDOFF_FAILED_EXIT_CODE = 1
+# Longest message preview shown in a new-message notification, in characters.
+MESSAGE_NOTIFICATION_PREVIEW_LIMIT = 200
+# Marks a cut preview.
+ELLIPSIS = "…"
 
 
 class HandsfreeApplication(QObject):
@@ -78,8 +93,10 @@ class HandsfreeApplication(QObject):
         self._session_bus: MessageBus | None = None
         self._instance: SingleInstance | None = None
         self._telephony: TelephonyClient | None = None
+        self._obex: ObexClient | None = None
         self._contacts: ContactsClient | None = None
-        self._notifier: CallNotifier | None = None
+        self._messages: MessagesClient | None = None
+        self._notifier: DesktopNotifier | None = None
         self._tray: HandsfreeTray | None = None
         self._phones = PhoneInfoClient(self)
 
@@ -89,6 +106,9 @@ class HandsfreeApplication(QObject):
         self._known_gateway_addresses: set[str] = set()
         # Call the user picked from the menu; shown in the call window while it exists.
         self._focused_call_path = ""
+        # Where a new-message notification's Open button leads: (phone address,
+        # conversation key) keyed by the message path the notification was shown for.
+        self._message_notification_targets: dict[str, tuple[str, str]] = {}
 
         self._call_window = CallWindow()
         self._settings_window = SettingsWindow()
@@ -106,6 +126,8 @@ class HandsfreeApplication(QObject):
         self._main_window.dial_requested.connect(self._dial)
         self._main_window.tone_requested.connect(self._send_tone_on_gateway)
         self._main_window.refresh_contacts_requested.connect(self._refresh_contacts)
+        self._main_window.refresh_messages_requested.connect(self._refresh_messages)
+        self._main_window.conversation_opened.connect(self._on_conversation_opened)
         self._status_timer.timeout.connect(self._on_status_tick)
         self._phones.phone_info_changed.connect(self._on_phone_info_changed)
 
@@ -133,10 +155,14 @@ class HandsfreeApplication(QObject):
         self._telephony.call_changed.connect(self._on_call_changed)
         self._telephony.call_removed.connect(self._on_call_removed)
 
-        self._contacts = ContactsClient(self._session_bus, self)
+        self._obex = ObexClient(self._session_bus, self)
+        self._contacts = ContactsClient(self._obex, self)
         self._contacts.phonebook_changed.connect(self._on_phonebook_changed)
+        self._messages = MessagesClient(self._obex, self)
+        self._messages.messages_changed.connect(self._on_messages_changed)
+        self._messages.message_received.connect(self._on_message_received)
 
-        self._notifier = CallNotifier(self._session_bus, self)
+        self._notifier = DesktopNotifier(self._session_bus, self)
         self._notifier.action_invoked.connect(self._on_notification_action)
 
         self._tray = HandsfreeTray(self._session_bus, application_icon(), self)
@@ -149,15 +175,16 @@ class HandsfreeApplication(QObject):
         self._tray.settings_requested.connect(self._show_settings)
         self._tray.dialpad_requested.connect(self._show_dialpad)
         self._tray.contacts_requested.connect(self._show_contacts)
+        self._tray.messages_requested.connect(self._show_messages)
         self._tray.call_focus_requested.connect(self._focus_call)
 
-        # The notifier, BlueZ, the tray and the contacts client come up before telephony
-        # so the very first call and gateway events can already be presented with names
-        # and battery, and the first gateway can start its phonebook sync.
+        # The notifier, BlueZ, the tray and the obexd client come up before telephony so
+        # the very first call and gateway events can already be presented with names and
+        # battery, and the first gateway can start its phonebook and message syncs.
         await self._notifier.start()
         await self._phones.start()
         await self._tray.start()
-        await self._contacts.start()
+        await self._obex.start()
         await self._telephony.start()
 
         self._refresh_views()
@@ -210,10 +237,10 @@ class HandsfreeApplication(QObject):
             )
 
     def _on_gateways_changed(self) -> None:
-        """Redraw, announce phones that connected or disconnected, and sync their contacts.
+        """Redraw, announce phones that connected or disconnected, and sync their data.
 
-        A phone that just connected gets its phonebook pulled after a short delay; a
-        phone that disconnected has its phonebook dropped.
+        A phone that just connected gets its phonebook pulled and its message session
+        opened after short delays; a phone that disconnected has both dropped.
         """
         current_addresses: set[str] = set()
         for gateway in self._telephony.gateways:
@@ -226,18 +253,65 @@ class HandsfreeApplication(QObject):
         for address in newly_connected:
             phone_label = self._phone_label(address)
             self._run(self._notifier.show_information("Phone connected", phone_label))
-            self._contacts.start_sync(address, AUTOMATIC_SYNC_DELAY_S)
+            self._contacts.start_sync(address, CONTACTS_SYNC_DELAY_S)
+            self._messages.start_sync(address, MESSAGES_SYNC_DELAY_S)
         for address in newly_disconnected:
             phone_label = self._phone_label(address)
             self._run(self._notifier.show_information("Phone disconnected", phone_label))
             self._contacts.forget(address)
+            self._messages.forget(address)
 
         self._refresh_views()
 
     def _on_phonebook_changed(self, _address: str) -> None:
-        """Redraw once a phonebook arrives, so calls and the Contacts tab show the names."""
+        """Redraw once a phonebook arrives, so calls and the tabs show the names."""
         self._present_calls()
         self._refresh_views()
+
+    def _on_messages_changed(self, _address: str) -> None:
+        """Redraw once messages arrive or change."""
+        self._refresh_views()
+
+    def _on_message_received(self, address: str, message: TextMessage) -> None:
+        """Notify about a message the phone just received, with a button to open it."""
+        sender_label = self._contacts.lookup_name(address, message.counterpart_address)
+        if not sender_label:
+            has_phone_name = (
+                bool(message.counterpart_name)
+                and message.counterpart_name != message.counterpart_address
+            )
+            sender_label = message.counterpart_name if has_phone_name else ""
+        if not sender_label:
+            sender_label = message.counterpart_address or "Unknown sender"
+
+        preview = _preview_text(message.text, MESSAGE_NOTIFICATION_PREVIEW_LIMIT)
+        conversation = self._conversation_containing(address, message.path)
+        conversation_key = conversation.key if conversation is not None else ""
+        self._message_notification_targets[message.path] = (address.upper(), conversation_key)
+
+        self._run(self._notifier.show_new_message(message.path, sender_label, preview))
+
+    def _on_conversation_opened(self, gateway_path: str, conversation_key: str) -> None:
+        """Mark an opened conversation read on the phone and fetch its long messages."""
+        gateway = self._telephony.gateway_for(gateway_path)
+        if gateway is None:
+            return
+
+        conversation = None
+        for candidate in self._conversations_for(gateway.address):
+            if candidate.key == conversation_key:
+                conversation = candidate
+        if conversation is None:
+            return
+
+        for message_path in conversation.incomplete_message_paths:
+            self._run(self._messages.fetch_full_text(gateway.address, message_path))
+        unread_paths = conversation.unread_message_paths
+        if unread_paths:
+            self._run(self._messages.mark_read(gateway.address, unread_paths))
+        for message_path in unread_paths:
+            self._message_notification_targets.pop(message_path, None)
+            self._run(self._notifier.close_for_key(message_path))
 
     def _on_call_added(self, call: Call) -> None:
         """Present a new call and start the status refresh timer."""
@@ -272,12 +346,29 @@ class HandsfreeApplication(QObject):
         if address_key in self._known_gateway_addresses:
             self._refresh_views()
 
-    def _on_notification_action(self, call_path: str, action_key: str) -> None:
-        """Route a pressed notification button to the matching call action."""
+    def _on_notification_action(self, subject_key: str, action_key: str) -> None:
+        """Route a pressed notification button to the matching call or message action."""
         if action_key == ANSWER_ACTION:
-            self._answer_call(call_path)
+            self._answer_call(subject_key)
         elif action_key == REJECT_ACTION:
-            self._hangup_call(call_path)
+            self._hangup_call(subject_key)
+        elif action_key == OPEN_MESSAGE_ACTION:
+            self._open_message_notification(subject_key)
+
+    def _open_message_notification(self, message_path: str) -> None:
+        """Show the conversation a new-message notification was about."""
+        target = self._message_notification_targets.pop(message_path, None)
+        if target is None:
+            self._show_messages()
+            return
+
+        address, conversation_key = target
+        gateway_path = ""
+        for gateway in self._telephony.gateways:
+            if gateway.address.upper() == address:
+                gateway_path = gateway.path
+
+        self._main_window.show_messages(gateway_path, conversation_key)
 
     def _on_status_tick(self) -> None:
         """Timer tick: refresh the durations in the call window and the menu."""
@@ -419,6 +510,11 @@ class HandsfreeApplication(QObject):
         for call in named_calls:
             progress_text_by_call_path[call.path] = self._progress_text(call)
 
+        unread_message_count = 0
+        for gateway in self._telephony.gateways:
+            for conversation in self._conversations_for(gateway.address):
+                unread_message_count += conversation.unread_count
+
         phone_info_by_address = self._phone_info_by_address()
         self._tray.update_state(
             self._telephony.is_available,
@@ -426,7 +522,26 @@ class HandsfreeApplication(QObject):
             named_calls,
             phone_info_by_address,
             progress_text_by_call_path,
+            unread_message_count,
         )
+
+    def _conversations_for(self, address: str) -> list[Conversation]:
+        """Group the phone's messages into conversations, named from its phonebook."""
+        messages_state = self._messages.state_for_address(address)
+
+        def lookup_name(counterpart_address: str) -> str:
+            return self._contacts.lookup_name(address, counterpart_address)
+
+        return group_conversations(list(messages_state.messages), lookup_name)
+
+    def _conversation_containing(self, address: str, message_path: str) -> Conversation | None:
+        """Return the phone's conversation that holds the message at `message_path`."""
+        for conversation in self._conversations_for(address):
+            for message in conversation.messages:
+                if message.path == message_path:
+                    return conversation
+
+        return None
 
     def _refresh_settings(self) -> None:
         """Rebuild the settings window for the current gateways."""
@@ -434,16 +549,21 @@ class HandsfreeApplication(QObject):
         self._settings_window.update_gateways(self._telephony.gateways, phone_info_by_address)
 
     def _refresh_main_window(self) -> None:
-        """Give the main window the phones, their active calls and their phonebooks."""
+        """Give the main window the phones, their calls, phonebooks and conversations."""
         active_call_label_by_gateway_path: dict[str, str] = {}
         for call in self._calls_with_contact_names():
             if call.state == CALL_STATE_ACTIVE:
                 active_call_label_by_gateway_path[call.gateway_path] = call.caller_label
 
         phonebook_state_by_gateway_path: dict[str, PhonebookState] = {}
+        messages_state_by_gateway_path: dict[str, MessagesState] = {}
+        conversations_by_gateway_path: dict[str, list[Conversation]] = {}
         for gateway in self._telephony.gateways:
             phonebook_state = self._contacts.state_for_address(gateway.address)
             phonebook_state_by_gateway_path[gateway.path] = phonebook_state
+            messages_state = self._messages.state_for_address(gateway.address)
+            messages_state_by_gateway_path[gateway.path] = messages_state
+            conversations_by_gateway_path[gateway.path] = self._conversations_for(gateway.address)
 
         phone_info_by_address = self._phone_info_by_address()
         self._main_window.update_state(
@@ -452,6 +572,8 @@ class HandsfreeApplication(QObject):
             phone_info_by_address,
             active_call_label_by_gateway_path,
             phonebook_state_by_gateway_path,
+            messages_state_by_gateway_path,
+            conversations_by_gateway_path,
         )
 
     def _show_settings(self) -> None:
@@ -468,11 +590,21 @@ class HandsfreeApplication(QObject):
         """Open or raise the main window on the Contacts tab."""
         self._main_window.show_contacts()
 
+    def _show_messages(self) -> None:
+        """Open or raise the main window on the Messages tab."""
+        self._main_window.show_messages()
+
     def _refresh_contacts(self, gateway_path: str) -> None:
         """Pull the phonebook of the phone at `gateway_path` again."""
         gateway = self._telephony.gateway_for(gateway_path)
         if gateway is not None:
             self._contacts.start_sync(gateway.address)
+
+    def _refresh_messages(self, gateway_path: str) -> None:
+        """List the newest messages of the phone at `gateway_path` again."""
+        gateway = self._telephony.gateway_for(gateway_path)
+        if gateway is not None:
+            self._messages.start_sync(gateway.address)
 
     def _phone_label(self, address: str) -> str:
         """Return the phone's BlueZ alias, or its address when BlueZ has no entry."""
@@ -560,6 +692,17 @@ class HandsfreeApplication(QObject):
             self._run(
                 self._notifier.show_information("Action failed", str(failure), URGENCY_NORMAL)
             )
+
+
+def _preview_text(text: str, limit: int) -> str:
+    """Collapse `text` to one line of at most `limit` characters for a notification."""
+    single_line = " ".join(text.split())
+    if len(single_line) <= limit:
+        return single_line
+
+    cut_length = limit - len(ELLIPSIS)
+
+    return single_line[:cut_length] + ELLIPSIS
 
 
 def _format_duration(elapsed_seconds: int) -> str:

@@ -77,14 +77,37 @@ conversation on 2026-09-19 and are changed here, not in code comments.
 
 ### 3. Messages
 
-- A window listing conversations and a thread view. Sending is a later addition
-  (`MessageAccess1.PushMessage` exists in obexd).
+- The Messages tab of the main window: conversations on the left (name, preview of the
+  latest message, bold while it holds unread messages), the selected conversation on
+  the right as bubbles (incoming left, outgoing right, time under each), a Refresh
+  button and a status line. Conversations are grouped by the other party's address
+  because the phone tested returns one `ConversationId` for everything; a number in
+  national and international form is one conversation (same rule as caller ID).
+  Alphanumeric senders (service SMS) are conversations too. Names come from the
+  phonebook, else from the name the phone attached, else the address.
+- What is loaded: the 25 newest messages of the inbox and of the sent folder, when the
+  phone connects (five seconds after the gateway appears, after the phonebook pull) and
+  on Refresh (decision 2026-09-20). In memory only, dropped on disconnect.
+- Opening a conversation marks its unread messages as read on the phone
+  (`Message1.Read = true`, decision 2026-09-20) and fetches the full text of messages
+  whose listing preview may be cut (the listing's `Subject` is the SMS text up to 255
+  characters).
+- Sending is a later addition (`MessageAccess1.PushMessage` exists in obexd).
 - Backend: obexd's Message Access client: `CreateSession(address, {Target: "map"})`,
-  `MessageAccess1.SetFolder`, `ListFolders`, `ListMessages`, `UpdateInbox`;
-  `Message1.Get(targetfile, attachment)` and its properties (`Sender`, `SenderAddress`,
-  `Timestamp`, `Subject`, `Read`, ...). obexd runs a built-in Message Notification Service
-  server, so the phone pushes `NewMessage`, `MessageDeleted`, `DeliverySuccess` and
-  `SendingSuccess` events, which surface as message objects appearing on the bus.
+  then `SetFolder("telecom")`, `SetFolder("msg")` (one level per request),
+  `ListMessages("inbox" | "sent", {MaxCount: 25})`, whose reply is a dictionary
+  `{message object path: properties}`; `Message1.Get(targetfile, false)` for a full
+  message, delivered as a bMessage file (text between `BEGIN:MSG` and `END:MSG`,
+  originator vCard before the envelope) into the app's transfer directory, deleted after
+  parsing. The MAP session stays open while the phone is connected: creating it makes
+  obexd register for the phone's notifications (the phone opens a server session back to
+  obexd), and a pushed message surfaces as a `Message1` object appearing below the
+  session, which the client completes with a `Get` and announces. A `Message1` object
+  disappearing means the phone deleted the message; the session disappearing means the
+  link was lost, shown with a Refresh hint.
+- Observed from the Android phone tested: `SupportedTypes` SMS_GSM, SMS_CDMA, MMS;
+  folders inbox, outbox, sent, deleted, draft; no `Direction` property from obexd 5.85,
+  so the folder tells the direction; timestamps `YYYYMMDDTHHMMSS`.
 - Platform reality: Android exposes MAP fully. iOS exposes it only when "Show
   Notifications" is enabled for the paired computer in its Bluetooth settings, and only
   for SMS/iMessage text. iOS is best-effort for this feature.
@@ -107,8 +130,11 @@ phone delivers over Bluetooth:
   places the lone active call on hold and resumes it on the next press. When the
   notification server lacks actions or persistence (`GetCapabilities`), ringing calls
   are shown in the same window with Answer and Reject instead of a notification.
-- **New message**: normal urgency, sender name (via contacts) or address and a text
-  preview; an action opens the Messages window on that thread.
+- **New message**: normal urgency, category `im.received`, sender name (via contacts)
+  or address as the title and the text as the body, cut at 200 characters; an Open
+  button shows the Messages tab on that conversation. Shown for every pushed incoming
+  message, service SMS included (decision 2026-09-20). Opening the conversation closes
+  the notifications of the messages it marks read.
 - **Phone connected / disconnected** and **telephony service unavailable**: low urgency,
   informational.
 - Nothing beyond what Bluetooth carries: Android has no profile for mirroring app
@@ -138,8 +164,8 @@ phone delivers over Bluetooth:
     "Speaker N %" and "Microphone N %" with speaker and microphone icons (clicking
     either opens the settings window) and the "Call audio on this computer" checkmark
     toggle (`AudioGatewayTransport1.RejectSCO` / `Activate`)
-  - after the phone sections, the windows that are not tied to one phone: Dialpad,
-    Messages, Contacts
+  - after the phone sections, the tabs of the main window: Dialpad, Contacts,
+    Messages (with the unread count in its label when there is one)
   - Quit
 - The Dialpad, Messages and Contacts windows are tabs of one window (`ui/main_window.py`);
   a menu entry opens it on that tab, and the `tel:` hand-off opens the Dialpad tab. A
@@ -179,7 +205,7 @@ is reported done.
    tray icon with phone name, battery and the call entry in the menu.
 2. Dialpad window with DTMF, `tel:` handler, single instance over D-Bus.
 3. Contacts sync window; caller-ID name lookup on incoming calls and in notifications.
-4. Messages window; new-message notifications.
+4. Messages tab; new-message notifications.
 5. Flathub submission: git-pinned manifest, screenshot, first release.
 
 Later, unscheduled: sending messages, reception once PipeWire exposes it.
@@ -201,6 +227,10 @@ the sandbox. Each is checked at the next opportunity that provides what it needs
 - **Contacts tab actions on the live phonebook** (step 3): Refresh re-pulls and updates
   the status line; Call on a contact with several numbers offers the number menu and
   dials the chosen one. Exercised offscreen with synthetic vCards only.
+- **Messages tab actions on the live phone** (step 4): marking read on open clears
+  the unread state on the phone, and a long message's full text is fetched when its
+  conversation is opened. The pushed-message path itself (notification with Open,
+  unread count in the tray) was verified with a service SMS on 2026-09-20.
 - **Local DTMF key tones during a call** (step 1): whether the far end hears the local
   key beep, which could happen if WirePlumber makes the phone's HFP link the default
   sink while a call is up. If it leaks, playback is pinned to a local sink

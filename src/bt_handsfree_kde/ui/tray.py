@@ -48,6 +48,7 @@ RESUME_ICON = "media-playback-start"
 PHONE_ICON = "smartphone"
 DIALPAD_ICON = "input-dialpad"
 CONTACTS_ICON = "view-pim-contacts"
+MESSAGES_ICON = "mail-message"
 SPEAKER_ICON = "audio-volume-high"
 MICROPHONE_ICON = "audio-input-microphone"
 QUIT_ICON = "application-exit"
@@ -72,9 +73,10 @@ class HandsfreeTray(QObject):
     audio_on_computer_toggled = Signal(str, bool)
     # The volume entries open the settings window.
     settings_requested = Signal()
-    # The Dialpad and Contacts entries open the main window on that tab.
+    # The Dialpad, Contacts and Messages entries open the main window on that tab.
     dialpad_requested = Signal()
     contacts_requested = Signal()
+    messages_requested = Signal()
     quit_requested = Signal()
 
     def __init__(
@@ -95,6 +97,7 @@ class HandsfreeTray(QObject):
         self._calls: list[Call] = []
         self._phone_info_by_address: dict[str, PhoneInfo] = {}
         self._progress_text_by_call_path: dict[str, str] = {}
+        self._unread_message_count = 0
 
         self._menu_service = DBusMenuService()
         self._item_service = StatusNotifierItemService(
@@ -133,6 +136,7 @@ class HandsfreeTray(QObject):
         calls: list[Call],
         phone_info_by_address: dict[str, PhoneInfo],
         progress_text_by_call_path: dict[str, str],
+        unread_message_count: int,
     ) -> None:
         """Replace the displayed state and redraw icon, tooltip and menu.
 
@@ -142,12 +146,14 @@ class HandsfreeTray(QObject):
             calls: Current calls across all gateways.
             phone_info_by_address: BlueZ details keyed by upper-case Bluetooth address.
             progress_text_by_call_path: Per call, its elapsed duration or dialing state.
+            unread_message_count: Unread incoming messages across all phones.
         """
         self._is_service_available = is_service_available
         self._gateways = list(gateways)
         self._calls = list(calls)
         self._phone_info_by_address = dict(phone_info_by_address)
         self._progress_text_by_call_path = dict(progress_text_by_call_path)
+        self._unread_message_count = unread_message_count
 
         self._apply_state()
 
@@ -235,8 +241,18 @@ class HandsfreeTray(QObject):
         contacts_item = MenuItem(
             "Contacts", CONTACTS_ICON, on_activated=self.contacts_requested.emit
         )
+        messages_label = "Messages"
+        if self._unread_message_count > 0:
+            messages_label = f"Messages ({self._unread_message_count} unread)"
+        messages_item = MenuItem(
+            messages_label,
+            MESSAGES_ICON,
+            key="messages",
+            on_activated=self.messages_requested.emit,
+        )
         menu_items.append(dialpad_item)
         menu_items.append(contacts_item)
+        menu_items.append(messages_item)
         menu_items.append(MenuItem.separator())
 
         menu_items.append(quit_item)

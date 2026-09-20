@@ -19,6 +19,9 @@ URI_PARAMETER_SEPARATOR = ";"
 # Some applications emit `tel://+15550100`; RFC 3966 has no authority part, so the marker
 # is tolerated and skipped.
 AUTHORITY_MARKER = "//"
+# Two numbers are the same when one ends with the other and the shorter has at least
+# this many digits; this matches national and international forms of one number.
+MIN_MATCHING_SUFFIX_DIGITS = 7
 
 
 def dial_string_from_text(text: str) -> str:
@@ -69,3 +72,30 @@ def number_from_tel_uri(uri: str) -> str:
     decoded_number = unquote(number_without_marker)
 
     return dial_string_from_text(decoded_number)
+
+
+def digits_of(number: str) -> str:
+    """Return only the decimal digits of `number`, dropping `+`, symbols and formatting."""
+    digit_characters: list[str] = []
+
+    for character in number:
+        if character in DIGITS:
+            digit_characters.append(character)
+
+    return "".join(digit_characters)
+
+
+def same_number(first_digits: str, second_digits: str) -> bool:
+    """Tell whether two digit strings denote the same number, allowing a country prefix.
+
+    Args:
+        first_digits: Digits only, as returned by `digits_of`.
+        second_digits: Digits only, as returned by `digits_of`.
+    """
+    if first_digits == second_digits:
+        return True
+
+    shorter_digits, longer_digits = sorted((first_digits, second_digits), key=len)
+    is_long_enough = len(shorter_digits) >= MIN_MATCHING_SUFFIX_DIGITS
+
+    return is_long_enough and longer_digits.endswith(shorter_digits)

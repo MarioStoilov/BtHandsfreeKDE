@@ -1,4 +1,4 @@
-"""The app's main window: a phone chooser above the Dialpad and Contacts tabs."""
+"""The app's main window: a phone chooser above the Dialpad, Contacts and Messages tabs."""
 
 from PySide6.QtCore import Signal
 from PySide6.QtGui import QIcon
@@ -8,12 +8,16 @@ from bt_handsfree_kde import APPLICATION_NAME
 from bt_handsfree_kde.contacts.client import PhonebookState
 from bt_handsfree_kde.dbus.bluez import PhoneInfo
 from bt_handsfree_kde.dbus.telephony import AudioGateway
+from bt_handsfree_kde.messages.client import MessagesState
+from bt_handsfree_kde.messages.conversations import Conversation
 from bt_handsfree_kde.ui.contacts_page import ContactsPage
 from bt_handsfree_kde.ui.dialpad_page import DialpadPage
+from bt_handsfree_kde.ui.messages_page import MessagesPage
 
 # Theme icon names of the tabs (all present in Breeze).
 DIALPAD_TAB_ICON = "input-dialpad"
 CONTACTS_TAB_ICON = "view-pim-contacts"
+MESSAGES_TAB_ICON = "mail-message"
 # Text shown when PipeWire's telephony service is missing.
 SERVICE_UNAVAILABLE_TEXT = "PipeWire telephony service not available"
 # Text shown when the service runs but no phone is connected over HFP.
@@ -34,6 +38,10 @@ class MainWindow(QWidget):
     tone_requested = Signal(str, str)
     # Emitted with the gateway path when the Contacts tab asks for a new sync.
     refresh_contacts_requested = Signal(str)
+    # Emitted with the gateway path when the Messages tab asks for a new listing.
+    refresh_messages_requested = Signal(str)
+    # Emitted with (gateway path, conversation key) when a conversation is shown.
+    conversation_opened = Signal(str, str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         """Build the chooser and the tabs; `update_state` fills them."""
@@ -44,15 +52,19 @@ class MainWindow(QWidget):
         self._chooser_entries: list[tuple[str, str]] = []
         self._active_call_label_by_gateway_path: dict[str, str] = {}
         self._phonebook_state_by_gateway_path: dict[str, PhonebookState] = {}
+        self._messages_state_by_gateway_path: dict[str, MessagesState] = {}
+        self._conversations_by_gateway_path: dict[str, list[Conversation]] = {}
 
         self._phone_chooser = QComboBox(self)
         self._phone_chooser.setVisible(False)
 
         self._dialpad_page = DialpadPage(self)
         self._contacts_page = ContactsPage(self)
+        self._messages_page = MessagesPage(self)
         self._tabs = QTabWidget(self)
         self._tabs.addTab(self._dialpad_page, QIcon.fromTheme(DIALPAD_TAB_ICON), "Dialpad")
         self._tabs.addTab(self._contacts_page, QIcon.fromTheme(CONTACTS_TAB_ICON), "Contacts")
+        self._tabs.addTab(self._messages_page, QIcon.fromTheme(MESSAGES_TAB_ICON), "Messages")
 
         column = QVBoxLayout(self)
         column.addWidget(self._phone_chooser)
@@ -62,6 +74,8 @@ class MainWindow(QWidget):
         self._dialpad_page.tone_requested.connect(self.tone_requested)
         self._contacts_page.dial_requested.connect(self.dial_requested)
         self._contacts_page.refresh_requested.connect(self.refresh_contacts_requested)
+        self._messages_page.refresh_requested.connect(self.refresh_messages_requested)
+        self._messages_page.conversation_opened.connect(self.conversation_opened)
         self._phone_chooser.currentIndexChanged.connect(self._on_phone_selected)
 
         self._push_state_to_pages()
@@ -82,6 +96,8 @@ class MainWindow(QWidget):
         phone_info_by_address: dict[str, PhoneInfo],
         active_call_label_by_gateway_path: dict[str, str],
         phonebook_state_by_gateway_path: dict[str, PhonebookState],
+        messages_state_by_gateway_path: dict[str, MessagesState],
+        conversations_by_gateway_path: dict[str, list[Conversation]],
     ) -> None:
         """Replace what the window knows and pass the selected phone's share to the tabs.
 
@@ -94,10 +110,14 @@ class MainWindow(QWidget):
             active_call_label_by_gateway_path: Caller label of the active call per gateway
                 path; gateways without an active call are absent.
             phonebook_state_by_gateway_path: Contacts sync state per gateway path.
+            messages_state_by_gateway_path: Messages sync state per gateway path.
+            conversations_by_gateway_path: Conversations per gateway path, newest first.
         """
         self._is_service_available = is_service_available
         self._active_call_label_by_gateway_path = dict(active_call_label_by_gateway_path)
         self._phonebook_state_by_gateway_path = dict(phonebook_state_by_gateway_path)
+        self._messages_state_by_gateway_path = dict(messages_state_by_gateway_path)
+        self._conversations_by_gateway_path = dict(conversations_by_gateway_path)
 
         chooser_entries: list[tuple[str, str]] = []
         for gateway in gateways:
@@ -126,6 +146,24 @@ class MainWindow(QWidget):
         self._tabs.setCurrentWidget(self._contacts_page)
         self._bring_to_front()
         self._contacts_page.focus_search_field()
+
+    def show_messages(self, gateway_path: str = "", conversation_key: str = "") -> None:
+        """Open the window on the Messages tab, on a phone and conversation when given.
+
+        Args:
+            gateway_path: Phone to select first; empty keeps the current selection.
+            conversation_key: Conversation to select; empty keeps the current one.
+        """
+        if gateway_path:
+            gateway_index = self._phone_chooser.findData(gateway_path)
+            if gateway_index >= 0:
+                self._phone_chooser.setCurrentIndex(gateway_index)
+
+        self._tabs.setCurrentWidget(self._messages_page)
+        self._bring_to_front()
+        if conversation_key:
+            self._messages_page.show_conversation(conversation_key)
+        self._messages_page.focus_conversations()
 
     def _bring_to_front(self) -> None:
         """Show the window and ask the window manager to raise and activate it."""
@@ -164,9 +202,14 @@ class MainWindow(QWidget):
 
         active_call_label = self._active_call_label_by_gateway_path.get(gateway_path)
         phonebook_state = self._phonebook_state_by_gateway_path.get(gateway_path)
+        messages_state = self._messages_state_by_gateway_path.get(gateway_path)
+        conversations = self._conversations_by_gateway_path.get(gateway_path, [])
 
         self._dialpad_page.update_phone(gateway_path, active_call_label, unavailable_reason)
         self._contacts_page.update_phone(gateway_path, phonebook_state, unavailable_reason)
+        self._messages_page.update_phone(
+            gateway_path, messages_state, conversations, unavailable_reason
+        )
 
 
 def _phone_label(gateway: AudioGateway, phone_info_by_address: dict[str, PhoneInfo]) -> str:

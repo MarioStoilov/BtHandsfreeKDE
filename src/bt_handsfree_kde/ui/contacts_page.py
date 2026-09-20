@@ -20,8 +20,9 @@ from bt_handsfree_kde.contacts.client import (
     SYNC_STATE_SYNCING,
     PhonebookState,
 )
-from bt_handsfree_kde.contacts.phonebook import Phonebook, digits_of
+from bt_handsfree_kde.contacts.phonebook import Phonebook
 from bt_handsfree_kde.contacts.vcard import Contact
+from bt_handsfree_kde.phone_numbers import digits_of
 
 # Theme icon names for the buttons (all present in Breeze).
 CALL_ICON = "call-start"
