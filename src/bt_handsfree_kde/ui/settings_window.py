@@ -15,8 +15,8 @@ from PySide6.QtWidgets import (
 )
 
 from bt_handsfree_kde import APPLICATION_NAME
-from bt_handsfree_kde.bluez import PhoneInfo
-from bt_handsfree_kde.telephony import MAX_VOLUME_LEVEL, MIN_VOLUME_LEVEL, AudioGateway
+from bt_handsfree_kde.dbus.bluez import PhoneInfo
+from bt_handsfree_kde.dbus.telephony import MAX_VOLUME_LEVEL, MIN_VOLUME_LEVEL, AudioGateway
 
 # HFP codec identifiers as reported in `AudioGatewayTransport1.Codec`.
 CODEC_NAMES = {1: "CVSD", 2: "mSBC", 3: "LC3-SWB"}

@@ -4,6 +4,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Coroutine
+from dataclasses import replace
 from typing import Any
 
 from dbus_fast import BusType
@@ -11,21 +12,17 @@ from dbus_fast.aio import MessageBus
 from PySide6.QtCore import QObject, QTimer
 from PySide6.QtWidgets import QApplication
 
-from bt_handsfree_kde.bluez import PhoneInfo, PhoneInfoClient
-from bt_handsfree_kde.call_window import CallWindow
-from bt_handsfree_kde.dbus_helpers import DBusRequestError
-from bt_handsfree_kde.dialpad_window import DialpadWindow
-from bt_handsfree_kde.icons import application_icon
-from bt_handsfree_kde.instance import SingleInstance
-from bt_handsfree_kde.notifications import (
+from bt_handsfree_kde.contacts.client import AUTOMATIC_SYNC_DELAY_S, ContactsClient, PhonebookState
+from bt_handsfree_kde.dbus.bluez import PhoneInfo, PhoneInfoClient
+from bt_handsfree_kde.dbus.helpers import DBusRequestError
+from bt_handsfree_kde.dbus.instance import SingleInstance
+from bt_handsfree_kde.dbus.notifications import (
     ANSWER_ACTION,
     REJECT_ACTION,
     URGENCY_NORMAL,
     CallNotifier,
 )
-from bt_handsfree_kde.phone_numbers import number_from_tel_uri
-from bt_handsfree_kde.settings_window import SettingsWindow
-from bt_handsfree_kde.telephony import (
+from bt_handsfree_kde.dbus.telephony import (
     CALL_STATE_ACTIVE,
     CALL_STATE_ALERTING,
     CALL_STATE_DIALING,
@@ -34,7 +31,12 @@ from bt_handsfree_kde.telephony import (
     Call,
     TelephonyClient,
 )
-from bt_handsfree_kde.tray import HandsfreeTray
+from bt_handsfree_kde.icons import application_icon
+from bt_handsfree_kde.phone_numbers import number_from_tel_uri
+from bt_handsfree_kde.ui.call_window import CallWindow
+from bt_handsfree_kde.ui.main_window import MainWindow
+from bt_handsfree_kde.ui.settings_window import SettingsWindow
+from bt_handsfree_kde.ui.tray import HandsfreeTray
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +78,7 @@ class HandsfreeApplication(QObject):
         self._session_bus: MessageBus | None = None
         self._instance: SingleInstance | None = None
         self._telephony: TelephonyClient | None = None
+        self._contacts: ContactsClient | None = None
         self._notifier: CallNotifier | None = None
         self._tray: HandsfreeTray | None = None
         self._phones = PhoneInfoClient(self)
@@ -89,7 +92,7 @@ class HandsfreeApplication(QObject):
 
         self._call_window = CallWindow()
         self._settings_window = SettingsWindow()
-        self._dialpad_window = DialpadWindow()
+        self._main_window = MainWindow()
         self._status_timer = QTimer(self)
         self._status_timer.setInterval(CALL_STATUS_REFRESH_INTERVAL_MS)
 
@@ -100,8 +103,9 @@ class HandsfreeApplication(QObject):
         self._settings_window.speaker_volume_changed.connect(self._set_speaker_volume)
         self._settings_window.microphone_volume_changed.connect(self._set_microphone_volume)
         self._settings_window.audio_on_computer_changed.connect(self._set_audio_on_computer)
-        self._dialpad_window.dial_requested.connect(self._dial)
-        self._dialpad_window.tone_requested.connect(self._send_tone_on_gateway)
+        self._main_window.dial_requested.connect(self._dial)
+        self._main_window.tone_requested.connect(self._send_tone_on_gateway)
+        self._main_window.refresh_contacts_requested.connect(self._refresh_contacts)
         self._status_timer.timeout.connect(self._on_status_tick)
         self._phones.phone_info_changed.connect(self._on_phone_info_changed)
 
@@ -129,6 +133,9 @@ class HandsfreeApplication(QObject):
         self._telephony.call_changed.connect(self._on_call_changed)
         self._telephony.call_removed.connect(self._on_call_removed)
 
+        self._contacts = ContactsClient(self._session_bus, self)
+        self._contacts.phonebook_changed.connect(self._on_phonebook_changed)
+
         self._notifier = CallNotifier(self._session_bus, self)
         self._notifier.action_invoked.connect(self._on_notification_action)
 
@@ -141,13 +148,16 @@ class HandsfreeApplication(QObject):
         self._tray.audio_on_computer_toggled.connect(self._set_audio_on_computer)
         self._tray.settings_requested.connect(self._show_settings)
         self._tray.dialpad_requested.connect(self._show_dialpad)
+        self._tray.contacts_requested.connect(self._show_contacts)
         self._tray.call_focus_requested.connect(self._focus_call)
 
-        # The notifier, BlueZ and the tray come up before telephony so the very first
-        # call and gateway events can already be presented with names and battery.
+        # The notifier, BlueZ, the tray and the contacts client come up before telephony
+        # so the very first call and gateway events can already be presented with names
+        # and battery, and the first gateway can start its phonebook sync.
         await self._notifier.start()
         await self._phones.start()
         await self._tray.start()
+        await self._contacts.start()
         await self._telephony.start()
 
         self._refresh_views()
@@ -200,7 +210,11 @@ class HandsfreeApplication(QObject):
             )
 
     def _on_gateways_changed(self) -> None:
-        """Redraw and announce phones that connected or disconnected over HFP."""
+        """Redraw, announce phones that connected or disconnected, and sync their contacts.
+
+        A phone that just connected gets its phonebook pulled after a short delay; a
+        phone that disconnected has its phonebook dropped.
+        """
         current_addresses: set[str] = set()
         for gateway in self._telephony.gateways:
             current_addresses.add(gateway.address.upper())
@@ -212,10 +226,17 @@ class HandsfreeApplication(QObject):
         for address in newly_connected:
             phone_label = self._phone_label(address)
             self._run(self._notifier.show_information("Phone connected", phone_label))
+            self._contacts.start_sync(address, AUTOMATIC_SYNC_DELAY_S)
         for address in newly_disconnected:
             phone_label = self._phone_label(address)
             self._run(self._notifier.show_information("Phone disconnected", phone_label))
+            self._contacts.forget(address)
 
+        self._refresh_views()
+
+    def _on_phonebook_changed(self, _address: str) -> None:
+        """Redraw once a phonebook arrives, so calls and the Contacts tab show the names."""
+        self._present_calls()
         self._refresh_views()
 
     def _on_call_added(self, call: Call) -> None:
@@ -272,7 +293,7 @@ class HandsfreeApplication(QObject):
         picked one from the menu.
         """
         live_calls: list[Call] = []
-        for call in self._telephony.calls:
+        for call in self._calls_with_contact_names():
             if call.state == CALL_STATE_DISCONNECTED:
                 self._run(self._notifier.close_for_call(call.path))
             else:
@@ -344,10 +365,40 @@ class HandsfreeApplication(QObject):
             self._call_started_at[call.path] = time.monotonic()
 
     def _refresh_views(self) -> None:
-        """Push the combined telephony and BlueZ state to the tray, settings and dialpad."""
+        """Push the combined state to the tray, the settings window and the main window."""
         self._refresh_tray()
         self._refresh_settings()
-        self._refresh_dialpad()
+        self._refresh_main_window()
+
+    def _call_with_contact_name(self, call: Call) -> Call:
+        """Fill in the caller's name from the synced phonebook when the phone sent none.
+
+        The hands-free profile carries numbers only on most phones; the name comes from
+        the phonebook of the gateway that carries the call, matched by number.
+        """
+        has_name = bool(call.name)
+        has_number = bool(call.line_identification)
+        if has_name or not has_number:
+            return call
+
+        gateway = self._telephony.gateway_for(call.gateway_path)
+        if gateway is None:
+            return call
+
+        contact_name = self._contacts.lookup_name(gateway.address, call.line_identification)
+        if not contact_name:
+            return call
+
+        return replace(call, name=contact_name)
+
+    def _calls_with_contact_names(self) -> list[Call]:
+        """Return the current calls with caller names filled in from the phonebooks."""
+        named_calls: list[Call] = []
+
+        for call in self._telephony.calls:
+            named_calls.append(self._call_with_contact_name(call))
+
+        return named_calls
 
     def _phone_info_by_address(self) -> dict[str, PhoneInfo]:
         """Collect BlueZ details for every gateway, keyed by upper-case address."""
@@ -363,15 +414,16 @@ class HandsfreeApplication(QObject):
 
     def _refresh_tray(self) -> None:
         """Redraw the tray icon and menu, including per-call progress texts."""
+        named_calls = self._calls_with_contact_names()
         progress_text_by_call_path: dict[str, str] = {}
-        for call in self._telephony.calls:
+        for call in named_calls:
             progress_text_by_call_path[call.path] = self._progress_text(call)
 
         phone_info_by_address = self._phone_info_by_address()
         self._tray.update_state(
             self._telephony.is_available,
             self._telephony.gateways,
-            self._telephony.calls,
+            named_calls,
             phone_info_by_address,
             progress_text_by_call_path,
         )
@@ -381,19 +433,25 @@ class HandsfreeApplication(QObject):
         phone_info_by_address = self._phone_info_by_address()
         self._settings_window.update_gateways(self._telephony.gateways, phone_info_by_address)
 
-    def _refresh_dialpad(self) -> None:
-        """Give the dialpad the phones to choose from and which of them are in a call."""
+    def _refresh_main_window(self) -> None:
+        """Give the main window the phones, their active calls and their phonebooks."""
         active_call_label_by_gateway_path: dict[str, str] = {}
-        for call in self._telephony.calls:
+        for call in self._calls_with_contact_names():
             if call.state == CALL_STATE_ACTIVE:
                 active_call_label_by_gateway_path[call.gateway_path] = call.caller_label
 
+        phonebook_state_by_gateway_path: dict[str, PhonebookState] = {}
+        for gateway in self._telephony.gateways:
+            phonebook_state = self._contacts.state_for_address(gateway.address)
+            phonebook_state_by_gateway_path[gateway.path] = phonebook_state
+
         phone_info_by_address = self._phone_info_by_address()
-        self._dialpad_window.update_state(
+        self._main_window.update_state(
             self._telephony.is_available,
             self._telephony.gateways,
             phone_info_by_address,
             active_call_label_by_gateway_path,
+            phonebook_state_by_gateway_path,
         )
 
     def _show_settings(self) -> None:
@@ -403,13 +461,18 @@ class HandsfreeApplication(QObject):
         self._settings_window.activateWindow()
 
     def _show_dialpad(self, number: str = "") -> None:
-        """Open or raise the dialpad, replacing its number when `number` is not empty."""
-        if number:
-            self._dialpad_window.set_number(number)
+        """Open or raise the main window on the Dialpad tab, prefilled when a number is given."""
+        self._main_window.show_dialpad(number)
 
-        self._dialpad_window.show()
-        self._dialpad_window.raise_()
-        self._dialpad_window.activateWindow()
+    def _show_contacts(self) -> None:
+        """Open or raise the main window on the Contacts tab."""
+        self._main_window.show_contacts()
+
+    def _refresh_contacts(self, gateway_path: str) -> None:
+        """Pull the phonebook of the phone at `gateway_path` again."""
+        gateway = self._telephony.gateway_for(gateway_path)
+        if gateway is not None:
+            self._contacts.start_sync(gateway.address)
 
     def _phone_label(self, address: str) -> str:
         """Return the phone's BlueZ alias, or its address when BlueZ has no entry."""

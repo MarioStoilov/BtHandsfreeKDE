@@ -108,6 +108,9 @@ The D-Bus surface the app consumes (verified against PipeWire 1.6 / WirePlumber 
   never by string-building alone.
 - **`org.bluez.obex`** (session bus, obexd): `Client1.CreateSession` with target `pbap`
   (contacts, `PhonebookAccess1`) or `map` (messages, `MessageAccess1` / `Message1`).
+  A session lives only as long as the D-Bus connection that created it, so all obexd
+  calls go through the app's shared bus connection; transfer completion arrives as
+  `PropertiesChanged` on `Transfer1` and may precede the reply that names the transfer.
   Details and platform caveats in `SCOPE.md`.
 - **Desktop integration**: the app *serves* `org.kde.StatusNotifierItem` and
   `com.canonical.dbusmenu` itself (see `SCOPE.md`, "Tray icon and menu") and *consumes*
@@ -121,38 +124,59 @@ The D-Bus surface the app consumes (verified against PipeWire 1.6 / WirePlumber 
 
 ### Module layout (`src/bt_handsfree_kde/`)
 
+Three layers: the `dbus/` package holds everything that speaks a D-Bus protocol and
+creates no widgets; the `contacts/` package holds the phonebook feature's non-UI parts;
+the `ui/` package holds the windows, tabs and tray. The package root keeps the wiring
+(`app.py`, `__main__.py`) and the small modules every layer shares (`icons.py`,
+`phone_numbers.py`, `dtmf.py`). A new D-Bus client or server goes into `dbus/`, a new
+widget into `ui/`, and a feature that grows beyond one module gets its own package like
+`contacts/`. `ui/` may import from `dbus/` and the feature packages for their data
+types; nothing imports from `ui/` except `app.py`.
+
 - `__init__.py`: `APPLICATION_ID`, `APPLICATION_NAME`, `__version__`.
 - `__main__.py`: argument parsing (`tel:` URIs), `QApplication`, qasync event loop, runs
   `HandsfreeApplication` and returns its exit code.
 - `app.py`: `HandsfreeApplication`, the only place that wires clients to UI; claims the
-  single instance or hands the launch over and quits; owns the call-duration timer and
-  decides between call notifications and the fallback window.
-- `telephony.py`: `TelephonyClient` (**reference implementation** for the coding
+  single instance or hands the launch over and quits; owns the call-duration timer,
+  decides between call notifications and the fallback window, and fills caller names in
+  from the phonebooks before a call reaches any view.
+- `dbus/helpers.py`: `call_method`, `set_property`, `add_signal_match`,
+  `name_has_owner`, `unwrap_variant`, `DBusRequestError` (carries the D-Bus error name).
+- `dbus/telephony.py`: `TelephonyClient` (**reference implementation** for the coding
   standards), `AudioGateway`, `Call`, call-state constants, `TelephonyError`.
-- `bluez.py`: `PhoneInfoClient`, `PhoneInfo` (alias, connected, battery).
-- `notifications.py`: `CallNotifier`; incoming-call and informational notifications;
-  capability check.
-- `call_window.py`: `CallWindow`, always-on-top window for the shown call: icon buttons
+- `dbus/bluez.py`: `PhoneInfoClient`, `PhoneInfo` (alias, connected, battery).
+- `dbus/notifications.py`: `CallNotifier`; incoming-call and informational
+  notifications; capability check.
+- `dbus/statusnotifier.py`: `StatusNotifierItemService` (`org.kde.StatusNotifierItem`,
+  `ItemIsMenu = true`), watcher registration, icon pixmap rendering.
+- `dbus/dbusmenu.py`: `MenuItem`, `DBusMenuService` (`com.canonical.dbusmenu`).
+- `dbus/instance.py`: `SingleInstance`, `InstanceService` (`ShowDialpad`) on the app's
+  own bus name; the hand-off call a second launch makes.
+- `contacts/client.py`: `ContactsClient` (PBAP pull through obexd, one phonebook per
+  phone, transfer tracking), `PhonebookState`, sync-state constants, `ContactsError`,
+  `phonebook_cache_directory`.
+- `contacts/phonebook.py`: `Phonebook` (name lookup by number), `digits_of`, the
+  number-matching rule.
+- `contacts/vcard.py`: `parse_contacts` for vCard 2.1 / 3.0 text, `Contact`,
+  `PhoneNumber`.
+- `ui/call_window.py`: `CallWindow`, always-on-top window for the shown call: icon buttons
   (Answer / Reject or Hold / Hang up) and the collapsible DTMF dialpad.
-- `dialpad_window.py`: `DialpadWindow`, number field, phone chooser (several phones only),
-  keypad and Call button; keys send DTMF while the chosen phone has an active call.
-- `keypad.py`: the 12-key grid and its font, shared by the call window and the dialpad.
+- `ui/main_window.py`: `MainWindow`, phone chooser (several phones only) above the Dialpad
+  and Contacts tabs; pushes the chosen phone's state to each tab.
+- `ui/dialpad_page.py`: `DialpadPage`, number field, keypad and Call button; keys send DTMF
+  while the chosen phone has an active call.
+- `ui/contacts_page.py`: `ContactsPage`, search, contact list, Call (with a number menu for
+  contacts that have several), Refresh and the sync status line.
+- `ui/keypad.py`: the 12-key grid and its font, shared by the call window and the dialpad.
 - `phone_numbers.py`: `dial_string_from_text`, `number_from_tel_uri` (RFC 3966).
-- `instance.py`: `SingleInstance`, `InstanceService` (`ShowDialpad`) on the app's own bus
-  name; the hand-off call a second launch makes.
-- `settings_window.py`: `SettingsWindow`, per-phone volume sliders, audio routing, codec.
+- `ui/settings_window.py`: `SettingsWindow`, per-phone volume sliders, audio routing, codec.
 - `dtmf.py`: DTMF tone synthesis and `DtmfTonePlayer` (libpulse-simple via ctypes, one
   short thread per key press).
-- `tray.py`: `HandsfreeTray`; builds the `MenuItem` tree and icon/tooltip/status from
+- `ui/tray.py`: `HandsfreeTray`; builds the `MenuItem` tree and icon/tooltip/status from
   state and pushes them to the two protocol servers.
-- `statusnotifier.py`: `StatusNotifierItemService` (`org.kde.StatusNotifierItem`,
-  `ItemIsMenu = true`), watcher registration, icon pixmap rendering.
-- `dbusmenu.py`: `MenuItem`, `DBusMenuService` (`com.canonical.dbusmenu`).
 - `icons.py`: bundled icon path, `application_icon()` for windows, and
   `application_icon_reference()` (theme name once installed, file path from a checkout)
   for anything handed to other processes such as notifications.
-- `dbus_helpers.py`: `call_method`, `set_property`, `add_signal_match`,
-  `name_has_owner`, `unwrap_variant`, `DBusRequestError`.
 - `resources/icon.svg`: bundled application icon, also installed as the hicolor icon.
 
 Clients talk raw D-Bus messages (`call_method`) plus one `AddMatch` rule per interface

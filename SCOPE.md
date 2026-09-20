@@ -34,16 +34,45 @@ conversation on 2026-09-19 and are changed here, not in code comments.
 
 ### 2. Contacts sync
 
-- A window with a searchable contact list; each entry has a Call button and, once
-  messaging exists, a Message button.
+- The Contacts tab of the main window: a search field (matches name text, or the digits
+  typed against the numbers), one row per contact with the numbers in its tooltip, a
+  Call button, a Refresh button and a status line. Call dials the contact's only
+  number; a contact with several numbers gets a small menu under the button listing
+  them by kind (Mobile, Home, Work, ...), preferred number first. Double-click or Enter
+  on a row does the same as Call. Once messaging exists, a Message button joins them.
+- When it syncs: automatically each time a phone connects over HFP, two seconds after
+  the gateway appears so the phone is not asked for a second channel while it sets up
+  the first, and on Refresh. A sync already running for that phone is not restarted.
+- What is kept: the phonebook lives in memory for the session only, per phone, and is
+  dropped when the phone disconnects. Nothing is persisted (decision 2026-09-20).
 - Backend: obexd's Phonebook Access client (`org.bluez.obex`, session bus):
   `Client1.CreateSession(address, {Target: "pbap"})`, `PhonebookAccess1.Select("int",
-  "pb")`, `PullAll(targetfile, filters)`; `Search`/`Pull` for single lookups. The phone
-  prompts once to allow contact sharing (Android) or "Sync Contacts" (iOS).
-- obexd writes the vCard file on the host, so the target path is always the app's own
-  cache directory, whose absolute path is identical inside and outside the sandbox.
-- The synced phonebook is also the caller-ID source: HFP delivers numbers only, so names on
-  incoming calls and in the call notification come from a number lookup in the local copy.
+  "pb")`, `PullAll(targetfile, {Format: "vcard30", Fields: [N, FN, TEL]})`, then
+  `RemoveSession`. The transfer's end arrives as `PropertiesChanged` on
+  `org.bluez.obex.Transfer1` (`Status` `complete` or `error`), after which obexd removes
+  the transfer object; the completion signal can arrive before the `PullAll` reply is
+  processed, which the client accounts for. Only names and numbers are requested, so
+  photos never cross. The phone prompts once to allow contact sharing (Android) or
+  "Sync Contacts" (iOS); a refusal surfaces as a failed sync with instructions.
+- obexd binds a client session to the D-Bus connection that created it and drops the
+  session when that connection closes, so the pull runs on the app's long-lived bus
+  connection. (A `busctl call` cannot exercise this API for that reason.)
+- obexd writes the vCard file on the host, so the target path is the app's own cache
+  directory (`$XDG_CACHE_HOME/<app id>/`, `~/.cache` when unset), whose absolute path is
+  identical inside and outside the sandbox. The file gets a random name, mode 0700
+  directory, and is deleted right after parsing, also on failure.
+- Parsing (`contacts/vcard.py`) reads vCard 2.1 and 3.0: folded lines, quoted-printable soft
+  breaks and charsets, 3.0 escapes, bare 2.1 type parameters. Name is `FN`, else
+  assembled from `N`, else the first number. Cards without a dialable number are
+  dropped. Observed from an Android phone: vCard 3.0 honoured, the field filter
+  honoured, numbers delivered as bare digits with or without `+`, types `CELL`,
+  `VOICE`, `HOME` with `PREF`.
+- Caller ID: HFP delivers numbers only on most phones, so a call whose `Name` is empty
+  gets its name from the phonebook of the gateway carrying it. Numbers match by digits;
+  a national form matches an international one when one ends with the other and the
+  shorter has at least seven digits. The lookup is applied wherever a call reaches a
+  view (notification, call window, tray, dialpad status), and views are redrawn when a
+  phonebook arrives during a call.
 - Sandbox: `--talk-name=org.bluez.obex`.
 
 ### 3. Messages
@@ -100,7 +129,8 @@ phone delivers over Bluetooth:
 - Left and right click both open the same dropdown menu. Qt's tray class cannot do
   this on Plasma (it hardcodes `ItemIsMenu = false` and opens its own popup, which
   Wayland refuses), so the app implements the `org.kde.StatusNotifierItem` and
-  `com.canonical.dbusmenu` protocols itself (`statusnotifier.py`, `dbusmenu.py`). Plasma
+  `com.canonical.dbusmenu` protocols itself (`dbus/statusnotifier.py`,
+  `dbus/dbusmenu.py`). Plasma
   renders the menu natively; entries can carry theme icons but no custom widgets, so
   each entry opens the matching window:
   - one section per connected phone: its name and battery as a header, then the active
@@ -111,8 +141,10 @@ phone delivers over Bluetooth:
   - after the phone sections, the windows that are not tied to one phone: Dialpad,
     Messages, Contacts
   - Quit
-- The Dialpad, Messages and Contacts windows are tabs of one window; a menu entry opens
-  it on that tab.
+- The Dialpad, Messages and Contacts windows are tabs of one window (`ui/main_window.py`);
+  a menu entry opens it on that tab, and the `tel:` hand-off opens the Dialpad tab. A
+  phone chooser sits above the tabs and is shown only when several phones are
+  connected; every tab acts on the chosen phone.
 - **Settings window**: one group per connected phone with a speaker slider and a
   microphone slider over the HFP gain range (0–15, shown as %), the audio routing
   checkbox and the negotiated codec while an audio link is open.
@@ -151,3 +183,29 @@ is reported done.
 5. Flathub submission: git-pinned manifest, screenshot, first release.
 
 Later, unscheduled: sending messages, reception once PipeWire exposes it.
+
+## Backlog
+
+Work that is known and not scheduled to a build step. An item leaves this list when it
+is done and the observed outcome has been stated.
+
+### Pending verifications
+
+Behaviour that is implemented but has not yet been exercised against a real phone or
+the sandbox. Each is checked at the next opportunity that provides what it needs.
+
+- **Caller ID on a live incoming call** (step 3): a call from a number in the synced
+  phonebook, arriving with an empty HFP `Name`, shows the contact's name in the
+  notification, the call window and the tray. Needs a caller who is in the phone's
+  contacts.
+- **Contacts tab actions on the live phonebook** (step 3): Refresh re-pulls and updates
+  the status line; Call on a contact with several numbers offers the number menu and
+  dials the chosen one. Exercised offscreen with synthetic vCards only.
+- **Local DTMF key tones during a call** (step 1): whether the far end hears the local
+  key beep, which could happen if WirePlumber makes the phone's HFP link the default
+  sink while a call is up. If it leaks, playback is pinned to a local sink
+  (`pa_simple_new` takes a device name) instead of the default.
+- **Flatpak sandbox** (steps 2 and 3): the `--own-name` hand-off between two sandboxed
+  launches, the exported desktop file's `tel:` registration, and obexd writing the
+  phonebook file into the sandboxed cache directory. Needs a machine with
+  flatpak-builder; the development host has none.

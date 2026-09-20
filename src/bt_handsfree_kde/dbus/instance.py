@@ -14,7 +14,7 @@ from dbus_fast.service import ServiceInterface, method
 from PySide6.QtCore import QObject, Signal
 
 from bt_handsfree_kde import APPLICATION_ID
-from bt_handsfree_kde.dbus_helpers import DBusRequestError, call_method
+from bt_handsfree_kde.dbus.helpers import DBusRequestError, call_method
 
 logger = logging.getLogger(__name__)
 

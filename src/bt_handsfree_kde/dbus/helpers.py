@@ -21,6 +21,17 @@ DBUS_DAEMON_INTERFACE = "org.freedesktop.DBus"
 class DBusRequestError(Exception):
     """A D-Bus method call was answered with an error or could not be delivered."""
 
+    def __init__(self, message: str, error_name: str = "") -> None:
+        """Create the error.
+
+        Args:
+            message: Human-readable description naming the failed member and path.
+            error_name: D-Bus error name from the reply; empty when the call was never
+                answered (connection failure).
+        """
+        super().__init__(message)
+        self.error_name = error_name
+
 
 def unwrap_variant(value: Any) -> Any:
     """Return `value` with every `Variant` replaced by its payload, recursively.
@@ -98,7 +109,9 @@ async def call_method(
     is_error_reply = reply is not None and reply.message_type == MessageType.ERROR
     if is_error_reply:
         error_text = reply.body[0] if reply.body else reply.error_name
-        raise DBusRequestError(f"{interface}.{member} on {path}: {reply.error_name}: {error_text}")
+        raise DBusRequestError(
+            f"{interface}.{member} on {path}: {reply.error_name}: {error_text}", reply.error_name
+        )
 
     if reply is None:
         return []

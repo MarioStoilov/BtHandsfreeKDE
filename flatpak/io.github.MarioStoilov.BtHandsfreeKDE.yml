@@ -17,6 +17,10 @@ finish-args:
   # Single instance: the app owns its ID on the session bus so a second launch (the tel:
   # URI handler) hands its number to the running instance and exits.
   - --own-name=io.github.MarioStoilov.BtHandsfreeKDE
+  # Contacts: the phonebook is pulled through obexd's Phonebook Access client. obexd
+  # writes the transfer file into the app's own cache directory, no extra filesystem
+  # access is needed.
+  - --talk-name=org.bluez.obex
   # System tray (StatusNotifierItem) and call notifications with actions.
   - --talk-name=org.kde.StatusNotifierWatcher
   - --talk-name=org.freedesktop.Notifications

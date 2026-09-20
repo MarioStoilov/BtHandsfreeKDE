@@ -12,9 +12,9 @@ from PySide6.QtWidgets import (
 )
 
 from bt_handsfree_kde import APPLICATION_NAME
+from bt_handsfree_kde.dbus.telephony import CALL_STATE_HELD, Call
 from bt_handsfree_kde.dtmf import DtmfTonePlayer
-from bt_handsfree_kde.keypad import build_keypad, keypad_font
-from bt_handsfree_kde.telephony import CALL_STATE_HELD, Call
+from bt_handsfree_kde.ui.keypad import build_keypad, keypad_font
 
 # Theme icon names for the buttons (all present in Breeze).
 ANSWER_ICON = "call-start"

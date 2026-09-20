@@ -3,14 +3,18 @@
 A KDE Plasma tray application that turns your Linux desktop into a Bluetooth hands-free
 unit for a phone (Android or iOS). Incoming calls arrive as notifications with Answer and
 Reject buttons. A call in progress gets a small always-on-top window with the caller,
-the running duration, Hold and Hang up buttons and a collapsible DTMF dialpad. A dialpad
-window places calls; clicking a `tel:` link anywhere on the desktop opens it with the
-number filled in, and while a call is up its keys send DTMF tones. The tray icon opens
-the same menu on left and right click: the current call, speaker and microphone levels
-(which open the settings window with sliders), a toggle for where call audio plays, the
-dialpad, and the phone's battery level next to its name.
+the running duration, Hold and Hang up buttons and a collapsible DTMF dialpad. The main
+window has a Dialpad tab and a Contacts tab. The dialpad places calls; clicking a `tel:`
+link anywhere on the desktop opens it with the number filled in, and while a call is up
+its keys send DTMF tones. The Contacts tab lists the phone's contacts, read over
+Bluetooth each time the phone connects, with search and a Call button; the same list
+supplies caller names for incoming calls, which the hands-free profile itself does not
+carry. The tray icon opens the same menu on left and right click: the current call,
+speaker and microphone levels (which open the settings window with sliders), a toggle
+for where call audio plays, the dialpad, the contacts, and the phone's battery level
+next to its name.
 
-Planned and in progress: contacts sync, messages.
+Planned and in progress: messages.
 The full feature list, how each maps onto the Bluetooth stack, and the known
 shortcomings are in [`SCOPE.md`](SCOPE.md).
 
@@ -23,7 +27,8 @@ shortcomings are in [`SCOPE.md`](SCOPE.md).
 - PipeWire 1.4 or newer with the native Bluetooth HFP backend (the default; not oFono)
   and its telephony D-Bus service enabled (default). The app is a client of
   `org.pipewire.Telephony`; it never touches audio itself.
-- BlueZ. Contacts and messages (planned) additionally need obexd (`bluez-obexd`).
+- BlueZ, with obexd (`bluez-obexd`) for contacts; messages (planned) will use it too.
+  Without obexd, calls work and the Contacts tab says what is missing.
 - A desktop with a StatusNotifierItem tray and a freedesktop notification server.
   Developed and tested on KDE Plasma 6.
 - Your phone paired and connected with the hands-free profile.
@@ -66,8 +71,8 @@ sudo pacman -S pipewire pipewire-audio wireplumber bluez bluez-obex xcb-util-cur
 ```
 
 The PipeWire Bluetooth plugin lives in `libspa-0.2-bluetooth` (Debian/Ubuntu),
-`pipewire-libs` (Fedora) and `pipewire-audio` (Arch). `bluez-obexd` / `bluez-obex` is
-only needed for the planned contacts and messages features.
+`pipewire-libs` (Fedora) and `pipewire-audio` (Arch). `bluez-obexd` / `bluez-obex`
+provides the contacts feature; the bus starts it on demand.
 
 ### 2. uv
 
@@ -130,6 +135,19 @@ into `~/.local/bin`. The Flatpak needs none of this: its desktop file is exporte
 install, and the handler choice is made in System Settings > Applications > Default
 Applications, or with the same `xdg-mime` command.
 
+### Contacts
+
+The first time the app reads the contacts, the phone asks whether to allow contact
+sharing with this computer (Android) or to sync contacts (iOS). Allow it; the phone
+remembers the choice for this computer. Until then the Contacts tab shows the phone's
+refusal and a Refresh button.
+
+The contacts stay in memory and are read from the phone again each time it connects.
+obexd, which does the transfer, writes the phone's vCard file into the app's cache
+directory (`~/.cache/io.github.MarioStoilov.BtHandsfreeKDE`, or the app's own cache
+directory in the Flatpak); the file is deleted as soon as it has been parsed. Only
+names and telephone numbers are requested, never photos or addresses.
+
 ### Local Flatpak build
 
 ```bash
@@ -148,13 +166,15 @@ and commit instead.
 | --- | --- |
 | `--talk-name=org.pipewire.Telephony` | Call state and call control from PipeWire |
 | `--own-name=io.github.MarioStoilov.BtHandsfreeKDE` | Single instance: a second launch (a `tel:` link) hands its number to the running app |
+| `--talk-name=org.bluez.obex` | Contacts: phonebook download through obexd |
 | `--talk-name=org.kde.StatusNotifierWatcher` | Tray icon |
 | `--talk-name=org.freedesktop.Notifications` | Call notifications with buttons |
 | `--system-talk-name=org.bluez` | Phone name, connection state, battery |
 | `--socket=wayland`, `--socket=fallback-x11`, `--share=ipc` | Windows |
 | `--socket=pulseaudio` | Dialpad key tones (call audio itself never passes through the app) |
 
-No network or filesystem access is requested.
+No network or filesystem access is requested; the phonebook transfer file lands in the
+app's own cache directory, which every Flatpak may write.
 
 ## Development
 

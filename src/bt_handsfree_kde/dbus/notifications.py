@@ -8,7 +8,7 @@ from dbus_fast.aio import MessageBus
 from PySide6.QtCore import QObject, Signal
 
 from bt_handsfree_kde import APPLICATION_ID, APPLICATION_NAME
-from bt_handsfree_kde.dbus_helpers import DBusRequestError, call_method
+from bt_handsfree_kde.dbus.helpers import DBusRequestError, call_method
 from bt_handsfree_kde.icons import application_icon_reference
 
 logger = logging.getLogger(__name__)

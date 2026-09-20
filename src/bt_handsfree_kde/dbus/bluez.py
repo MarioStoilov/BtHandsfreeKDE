@@ -8,7 +8,7 @@ from dbus_fast import BusType, Message, MessageType
 from dbus_fast.aio import MessageBus
 from PySide6.QtCore import QObject, Signal
 
-from bt_handsfree_kde.dbus_helpers import (
+from bt_handsfree_kde.dbus.helpers import (
     OBJECT_MANAGER_INTERFACE,
     PROPERTIES_INTERFACE,
     DBusRequestError,

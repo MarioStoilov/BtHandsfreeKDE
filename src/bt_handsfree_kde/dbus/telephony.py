@@ -14,7 +14,7 @@ from dbus_fast import Message, MessageType, Variant
 from dbus_fast.aio import MessageBus
 from PySide6.QtCore import QObject, Signal
 
-from bt_handsfree_kde.dbus_helpers import (
+from bt_handsfree_kde.dbus.helpers import (
     DBUS_DAEMON_BUS_NAME,
     DBUS_DAEMON_INTERFACE,
     OBJECT_MANAGER_INTERFACE,

@@ -12,7 +12,7 @@ from dbus_fast.aio import MessageBus
 from dbus_fast.service import PropertyAccess, ServiceInterface, dbus_property, method, signal
 from PySide6.QtGui import QIcon, QImage
 
-from bt_handsfree_kde.dbus_helpers import DBusRequestError, call_method
+from bt_handsfree_kde.dbus.helpers import DBusRequestError, call_method
 
 logger = logging.getLogger(__name__)
 

@@ -10,15 +10,15 @@ from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QIcon
 
 from bt_handsfree_kde import APPLICATION_ID, APPLICATION_NAME
-from bt_handsfree_kde.bluez import PhoneInfo
-from bt_handsfree_kde.dbus_helpers import (
+from bt_handsfree_kde.dbus.bluez import PhoneInfo
+from bt_handsfree_kde.dbus.dbusmenu import MENU_OBJECT_PATH, DBusMenuService, MenuItem
+from bt_handsfree_kde.dbus.helpers import (
     DBUS_DAEMON_BUS_NAME,
     DBUS_DAEMON_INTERFACE,
     add_signal_match,
     name_has_owner,
 )
-from bt_handsfree_kde.dbusmenu import MENU_OBJECT_PATH, DBusMenuService, MenuItem
-from bt_handsfree_kde.statusnotifier import (
+from bt_handsfree_kde.dbus.statusnotifier import (
     STATUS_ACTIVE,
     STATUS_NEEDS_ATTENTION,
     STATUS_NOTIFIER_ITEM_PATH,
@@ -27,7 +27,7 @@ from bt_handsfree_kde.statusnotifier import (
     register_with_watcher,
     render_icon_pixmaps,
 )
-from bt_handsfree_kde.telephony import (
+from bt_handsfree_kde.dbus.telephony import (
     CALL_STATE_ACTIVE,
     CALL_STATE_HELD,
     MAX_VOLUME_LEVEL,
@@ -47,6 +47,7 @@ HOLD_ICON = "media-playback-pause"
 RESUME_ICON = "media-playback-start"
 PHONE_ICON = "smartphone"
 DIALPAD_ICON = "input-dialpad"
+CONTACTS_ICON = "view-pim-contacts"
 SPEAKER_ICON = "audio-volume-high"
 MICROPHONE_ICON = "audio-input-microphone"
 QUIT_ICON = "application-exit"
@@ -71,8 +72,9 @@ class HandsfreeTray(QObject):
     audio_on_computer_toggled = Signal(str, bool)
     # The volume entries open the settings window.
     settings_requested = Signal()
-    # The Dialpad entry opens the dialpad window.
+    # The Dialpad and Contacts entries open the main window on that tab.
     dialpad_requested = Signal()
+    contacts_requested = Signal()
     quit_requested = Signal()
 
     def __init__(
@@ -227,9 +229,14 @@ class HandsfreeTray(QObject):
             menu_items.extend(self._gateway_items(gateway))
             menu_items.append(MenuItem.separator())
 
-        # Windows that are not tied to one phone come after the phone sections.
+        # The tabs of the main window are not tied to one phone, so they come after
+        # the phone sections.
         dialpad_item = MenuItem("Dialpad", DIALPAD_ICON, on_activated=self.dialpad_requested.emit)
+        contacts_item = MenuItem(
+            "Contacts", CONTACTS_ICON, on_activated=self.contacts_requested.emit
+        )
         menu_items.append(dialpad_item)
+        menu_items.append(contacts_item)
         menu_items.append(MenuItem.separator())
 
         menu_items.append(quit_item)
