@@ -13,13 +13,17 @@ from PySide6.QtWidgets import QApplication
 
 from bt_handsfree_kde.bluez import PhoneInfo, PhoneInfoClient
 from bt_handsfree_kde.call_window import CallWindow
+from bt_handsfree_kde.dbus_helpers import DBusRequestError
+from bt_handsfree_kde.dialpad_window import DialpadWindow
 from bt_handsfree_kde.icons import application_icon
+from bt_handsfree_kde.instance import SingleInstance
 from bt_handsfree_kde.notifications import (
     ANSWER_ACTION,
     REJECT_ACTION,
     URGENCY_NORMAL,
     CallNotifier,
 )
+from bt_handsfree_kde.phone_numbers import number_from_tel_uri
 from bt_handsfree_kde.settings_window import SettingsWindow
 from bt_handsfree_kde.telephony import (
     CALL_STATE_ACTIVE,
@@ -45,22 +49,32 @@ CALL_WINDOW_PRIORITY = {
 }
 # Rank for states not listed above (incoming calls and anything unexpected).
 LOWEST_CALL_PRIORITY = 3
+# Process exit code when a second launch could not reach the running instance.
+HANDOFF_FAILED_EXIT_CODE = 1
 
 
 class HandsfreeApplication(QObject):
     """Top-level coordinator: owns the clients and the UI, and routes events between them."""
 
-    def __init__(self, qt_application: QApplication, parent: QObject | None = None) -> None:
+    def __init__(
+        self, qt_application: QApplication, launch_uris: list[str], parent: QObject | None = None
+    ) -> None:
         """Create the windows immediately; D-Bus connections are made in `start`.
 
         Args:
             qt_application: The running Qt application, used to quit from the tray.
+            launch_uris: Command-line arguments: `tel:` URIs whose number opens the dialpad.
             parent: Optional Qt parent.
         """
         super().__init__(parent)
         self._qt_application = qt_application
         self._qt_application.setWindowIcon(application_icon())
+        self._launch_uris = list(launch_uris)
+        # Exit code for the process; set before quitting when a hand-off to the running
+        # instance fails, otherwise 0.
+        self.exit_code = 0
         self._session_bus: MessageBus | None = None
+        self._instance: SingleInstance | None = None
         self._telephony: TelephonyClient | None = None
         self._notifier: CallNotifier | None = None
         self._tray: HandsfreeTray | None = None
@@ -75,6 +89,7 @@ class HandsfreeApplication(QObject):
 
         self._call_window = CallWindow()
         self._settings_window = SettingsWindow()
+        self._dialpad_window = DialpadWindow()
         self._status_timer = QTimer(self)
         self._status_timer.setInterval(CALL_STATUS_REFRESH_INTERVAL_MS)
 
@@ -85,12 +100,27 @@ class HandsfreeApplication(QObject):
         self._settings_window.speaker_volume_changed.connect(self._set_speaker_volume)
         self._settings_window.microphone_volume_changed.connect(self._set_microphone_volume)
         self._settings_window.audio_on_computer_changed.connect(self._set_audio_on_computer)
+        self._dialpad_window.dial_requested.connect(self._dial)
+        self._dialpad_window.tone_requested.connect(self._send_tone_on_gateway)
         self._status_timer.timeout.connect(self._on_status_tick)
         self._phones.phone_info_changed.connect(self._on_phone_info_changed)
 
     async def start(self) -> None:
-        """Connect to both buses, start the clients and the tray, and show the initial state."""
+        """Connect to both buses, start the clients and the tray, and show the initial state.
+
+        When another process already owns the app's bus name, this one hands it the
+        `tel:` number from the command line (or just asks for the dialpad) and quits.
+        """
         self._session_bus = await MessageBus(bus_type=BusType.SESSION).connect()
+
+        # The instance check comes first: a second process must quit before it puts a
+        # tray icon on the bus or subscribes to anything.
+        self._instance = SingleInstance(self._session_bus, self)
+        self._instance.dialpad_requested.connect(self._show_dialpad)
+        is_single_instance = await self._instance.claim()
+        if not is_single_instance:
+            await self._hand_off_and_quit()
+            return
 
         self._telephony = TelephonyClient(self._session_bus, self)
         self._telephony.availability_changed.connect(self._on_availability_changed)
@@ -110,6 +140,7 @@ class HandsfreeApplication(QObject):
         self._tray.hold_requested.connect(self._toggle_hold_on_gateway)
         self._tray.audio_on_computer_toggled.connect(self._set_audio_on_computer)
         self._tray.settings_requested.connect(self._show_settings)
+        self._tray.dialpad_requested.connect(self._show_dialpad)
         self._tray.call_focus_requested.connect(self._focus_call)
 
         # The notifier, BlueZ and the tray come up before telephony so the very first
@@ -120,6 +151,40 @@ class HandsfreeApplication(QObject):
         await self._telephony.start()
 
         self._refresh_views()
+
+        # A tel: URI on the first launch opens the dialpad only now, once the phones are
+        # known, so the Call button is enabled right away.
+        if self._launch_uris:
+            launch_number = self._number_from_launch_uris()
+            self._show_dialpad(launch_number)
+
+    async def _hand_off_and_quit(self) -> None:
+        """Pass the launch request to the running instance, then quit this process."""
+        launch_number = self._number_from_launch_uris()
+
+        try:
+            await self._instance.show_dialpad_in_running_instance(launch_number)
+            logger.info("handed over to the running instance")
+        except DBusRequestError as request_error:
+            logger.error("the running instance could not be reached: %s", request_error)
+            self.exit_code = HANDOFF_FAILED_EXIT_CODE
+
+        self._session_bus.disconnect()
+        self._qt_application.quit()
+
+    def _number_from_launch_uris(self) -> str:
+        """Return the dial string of the first usable `tel:` URI from the command line.
+
+        Arguments that are not `tel:` URIs are reported without their content, which
+        may be personal, and skipped; the result is empty when none is usable.
+        """
+        for launch_uri in self._launch_uris:
+            number = number_from_tel_uri(launch_uri)
+            if number:
+                return number
+            logger.warning("ignoring a command-line argument that is not a tel: URI")
+
+        return ""
 
     def _on_availability_changed(self, is_available: bool) -> None:
         """Redraw and tell the user when the telephony service goes away."""
@@ -279,9 +344,10 @@ class HandsfreeApplication(QObject):
             self._call_started_at[call.path] = time.monotonic()
 
     def _refresh_views(self) -> None:
-        """Push the combined telephony and BlueZ state to the tray and the settings window."""
+        """Push the combined telephony and BlueZ state to the tray, settings and dialpad."""
         self._refresh_tray()
         self._refresh_settings()
+        self._refresh_dialpad()
 
     def _phone_info_by_address(self) -> dict[str, PhoneInfo]:
         """Collect BlueZ details for every gateway, keyed by upper-case address."""
@@ -315,11 +381,35 @@ class HandsfreeApplication(QObject):
         phone_info_by_address = self._phone_info_by_address()
         self._settings_window.update_gateways(self._telephony.gateways, phone_info_by_address)
 
+    def _refresh_dialpad(self) -> None:
+        """Give the dialpad the phones to choose from and which of them are in a call."""
+        active_call_label_by_gateway_path: dict[str, str] = {}
+        for call in self._telephony.calls:
+            if call.state == CALL_STATE_ACTIVE:
+                active_call_label_by_gateway_path[call.gateway_path] = call.caller_label
+
+        phone_info_by_address = self._phone_info_by_address()
+        self._dialpad_window.update_state(
+            self._telephony.is_available,
+            self._telephony.gateways,
+            phone_info_by_address,
+            active_call_label_by_gateway_path,
+        )
+
     def _show_settings(self) -> None:
         """Open or raise the settings window."""
         self._settings_window.show()
         self._settings_window.raise_()
         self._settings_window.activateWindow()
+
+    def _show_dialpad(self, number: str = "") -> None:
+        """Open or raise the dialpad, replacing its number when `number` is not empty."""
+        if number:
+            self._dialpad_window.set_number(number)
+
+        self._dialpad_window.show()
+        self._dialpad_window.raise_()
+        self._dialpad_window.activateWindow()
 
     def _phone_label(self, address: str) -> str:
         """Return the phone's BlueZ alias, or its address when BlueZ has no entry."""
@@ -364,11 +454,19 @@ class HandsfreeApplication(QObject):
         """Swap active and held calls on `gateway_path`; with one call this toggles hold."""
         self._run(self._telephony.swap_calls(gateway_path))
 
+    def _dial(self, gateway_path: str, number: str) -> None:
+        """Place a call to `number` from the phone at `gateway_path`."""
+        self._run(self._telephony.dial(gateway_path, number))
+
     def _send_tone(self, call_path: str, tone: str) -> None:
         """Send one DTMF tone on the gateway that carries `call_path`."""
         call = self._telephony.call_for(call_path)
         if call is not None:
             self._run(self._telephony.send_tones(call.gateway_path, tone))
+
+    def _send_tone_on_gateway(self, gateway_path: str, tone: str) -> None:
+        """Send one DTMF tone to the active call on `gateway_path`."""
+        self._run(self._telephony.send_tones(gateway_path, tone))
 
     def _set_audio_on_computer(self, gateway_path: str, audio_on_computer: bool) -> None:
         """Route call audio to this computer or keep it on the phone."""

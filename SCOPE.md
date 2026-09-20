@@ -8,14 +8,29 @@ conversation on 2026-09-19 and are changed here, not in code comments.
 
 ### 1. Dialpad, with phone-link integration
 
-- A window with a number field, a 12-key pad and a Call button. During an active call the
-  same keys send DTMF tones.
+- A window with a number field, a 12-key pad and a Call button. Each key press plays the
+  key's tone locally and inserts the key; the field also takes typed or pasted numbers,
+  including formatting (spaces, hyphens, dots, parentheses), which is stripped before
+  dialling. When several phones are connected a chooser above the field selects the one
+  to call from; with one phone it is hidden. Call is enabled only when a phone is
+  connected and the field holds something dialable.
+- During an active call on the selected phone the same keys also send DTMF tones to it,
+  and a status line says so ("Keys send tones to <caller>"), like a phone's in-call
+  dialpad. Pressing Call during a call still dials; what happens to the current call is
+  the phone's decision.
 - Backend: `Dial(number)` and `SendTones(tones)` on
   `org.pipewire.Telephony.AudioGateway1`.
-- The desktop file registers the app as the handler for the `tel:` URI scheme. A second
-  launch with a `tel:` argument hands the number to the running instance over the app's
-  own D-Bus name (`io.github.MarioStoilov.BtHandsfreeKDE`) and exits; the running
-  instance opens the dialpad prefilled. The Flatpak owns that name (`--own-name`).
+- The desktop file registers the app as the handler for the `tel:` URI scheme
+  (`MimeType=x-scheme-handler/tel`, `Exec=... %u`). The URI is read per RFC 3966: visual
+  separators and percent-encoding are handled, parameters after `;` (`phone-context`,
+  `ext`) are ignored, and a `tel://` authority marker is tolerated. The dialpad opens
+  prefilled; the call is not placed until the user presses Call.
+- Single instance: the first process owns the app's D-Bus name
+  (`io.github.MarioStoilov.BtHandsfreeKDE`, session bus) and serves
+  `/io/github/MarioStoilov/BtHandsfreeKDE` with one method, `ShowDialpad(s number)`. A
+  later launch hands its number over that method and exits. A launch without a `tel:`
+  argument (the app menu entry while the app is running) sends an empty number, which
+  just raises the dialpad. The Flatpak owns that name (`--own-name`).
 
 ### 2. Contacts sync
 
@@ -88,14 +103,13 @@ phone delivers over Bluetooth:
   `com.canonical.dbusmenu` protocols itself (`statusnotifier.py`, `dbusmenu.py`). Plasma
   renders the menu natively; entries can carry theme icons but no custom widgets, so
   each entry opens the matching window:
-  - the active or incoming call (caller, state) with Answer / Reject / Hold / Hang up
-  - Dialpad
-  - Messages
-  - Contacts
-  - "Speaker N %" and "Microphone N %" with speaker and microphone icons; clicking
-    either opens the settings window
-  - "Call audio on this computer" checkmark toggle (`AudioGatewayTransport1.RejectSCO`
-    / `Activate`)
+  - one section per connected phone: its name and battery as a header, then the active
+    or incoming call (caller, state) with Answer / Reject / Hold / Hang up, then
+    "Speaker N %" and "Microphone N %" with speaker and microphone icons (clicking
+    either opens the settings window) and the "Call audio on this computer" checkmark
+    toggle (`AudioGatewayTransport1.RejectSCO` / `Activate`)
+  - after the phone sections, the windows that are not tied to one phone: Dialpad,
+    Messages, Contacts
   - Quit
 - The Dialpad, Messages and Contacts windows are tabs of one window; a menu entry opens
   it on that tab.

@@ -18,8 +18,11 @@ LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 def main() -> int:
     """Run the tray application until the user quits it.
 
+    A launch while another instance runs hands over its `tel:` URIs and returns at once.
+
     Returns:
-        Process exit code: 0 on a normal quit.
+        Process exit code: 0 on a normal quit or a successful hand-off, 1 when the
+        running instance could not be reached.
     """
     argument_parser = argparse.ArgumentParser(
         prog="bt-handsfree-kde",
@@ -29,6 +32,13 @@ def main() -> int:
         "--verbose", action="store_true", help="log D-Bus traffic details at DEBUG level"
     )
     argument_parser.add_argument("--version", action="version", version=__version__)
+    argument_parser.add_argument(
+        "uris",
+        nargs="*",
+        metavar="URI",
+        help="tel: URIs whose number is opened in the dialpad; passed to the running "
+        "instance when there is one",
+    )
     arguments = argument_parser.parse_args()
 
     log_level = logging.DEBUG if arguments.verbose else logging.INFO
@@ -45,13 +55,13 @@ def main() -> int:
     quit_event = asyncio.Event()
     qt_application.aboutToQuit.connect(quit_event.set)
 
-    application = HandsfreeApplication(qt_application)
+    application = HandsfreeApplication(qt_application, arguments.uris)
 
     with event_loop:
         event_loop.create_task(application.start())
         event_loop.run_until_complete(quit_event.wait())
 
-    return 0
+    return application.exit_code
 
 
 if __name__ == "__main__":

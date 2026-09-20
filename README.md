@@ -3,12 +3,14 @@
 A KDE Plasma tray application that turns your Linux desktop into a Bluetooth hands-free
 unit for a phone (Android or iOS). Incoming calls arrive as notifications with Answer and
 Reject buttons. A call in progress gets a small always-on-top window with the caller,
-the running duration, Hold and Hang up buttons and a collapsible DTMF dialpad. The tray
-icon opens the same menu on left and right click: the current call, speaker and
-microphone levels (which open the settings window with sliders), a toggle for where
-call audio plays, and the phone's battery level next to its name.
+the running duration, Hold and Hang up buttons and a collapsible DTMF dialpad. A dialpad
+window places calls; clicking a `tel:` link anywhere on the desktop opens it with the
+number filled in, and while a call is up its keys send DTMF tones. The tray icon opens
+the same menu on left and right click: the current call, speaker and microphone levels
+(which open the settings window with sliders), a toggle for where call audio plays, the
+dialpad, and the phone's battery level next to its name.
 
-Planned and in progress: dialpad with `tel:` link handling, contacts sync, messages.
+Planned and in progress: contacts sync, messages.
 The full feature list, how each maps onto the Bluetooth stack, and the known
 shortcomings are in [`SCOPE.md`](SCOPE.md).
 
@@ -104,18 +106,29 @@ uv run bt-handsfree-kde --verbose        # --verbose logs every D-Bus event
 ```
 
 The tray icon appears in the Plasma system tray. Quit from the tray menu or with
-Ctrl+C in the terminal.
+Ctrl+C in the terminal. Only one instance runs at a time: launching the command again
+raises the dialpad of the running one, and `bt-handsfree-kde tel:+15550100` opens it
+with the number filled in.
 
 Optional: install the desktop file and icon for your user so the notification server
 and the desktop portal can associate the running app with its entry (silences the
-"Could not register app ID" warning on start):
+"Could not register app ID" warning on start), and make the app the handler for
+`tel:` links:
 
 ```bash
 install -Dm644 data/io.github.MarioStoilov.BtHandsfreeKDE.desktop \
         -t ~/.local/share/applications
 install -Dm644 src/bt_handsfree_kde/resources/icon.svg \
         ~/.local/share/icons/hicolor/scalable/apps/io.github.MarioStoilov.BtHandsfreeKDE.svg
+update-desktop-database ~/.local/share/applications
+xdg-mime default io.github.MarioStoilov.BtHandsfreeKDE.desktop x-scheme-handler/tel
 ```
+
+The desktop file runs `bt-handsfree-kde`, so for `tel:` links to reach a checkout that
+command has to be on your `PATH`, for example by symlinking `.venv/bin/bt-handsfree-kde`
+into `~/.local/bin`. The Flatpak needs none of this: its desktop file is exported on
+install, and the handler choice is made in System Settings > Applications > Default
+Applications, or with the same `xdg-mime` command.
 
 ### Local Flatpak build
 
@@ -134,6 +147,7 @@ and commit instead.
 | Permission | Why |
 | --- | --- |
 | `--talk-name=org.pipewire.Telephony` | Call state and call control from PipeWire |
+| `--own-name=io.github.MarioStoilov.BtHandsfreeKDE` | Single instance: a second launch (a `tel:` link) hands its number to the running app |
 | `--talk-name=org.kde.StatusNotifierWatcher` | Tray icon |
 | `--talk-name=org.freedesktop.Notifications` | Call notifications with buttons |
 | `--system-talk-name=org.bluez` | Phone name, connection state, battery |
@@ -148,6 +162,8 @@ No network or filesystem access is requested.
 uv run ruff format && uv run ruff check
 flatpak run --command=flatpak-builder-lint org.flatpak.Builder manifest flatpak/io.github.MarioStoilov.BtHandsfreeKDE.yml
 busctl --user call org.pipewire.Telephony /org/pipewire/Telephony org.freedesktop.DBus.ObjectManager GetManagedObjects
+busctl --user call io.github.MarioStoilov.BtHandsfreeKDE /io/github/MarioStoilov/BtHandsfreeKDE \
+       io.github.MarioStoilov.BtHandsfreeKDE ShowDialpad s "+15550100"   # what a tel: launch does
 ```
 
 Coding standards and repository rules are in `CLAUDE.md`.

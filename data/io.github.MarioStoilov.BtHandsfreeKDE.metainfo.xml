@@ -23,6 +23,9 @@
     </p>
   </description>
   <launchable type="desktop-id">io.github.MarioStoilov.BtHandsfreeKDE.desktop</launchable>
+  <provides>
+    <mediatype>x-scheme-handler/tel</mediatype>
+  </provides>
   <url type="homepage">https://github.com/MarioStoilov/BtHandsfreeKDE</url>
   <url type="bugtracker">https://github.com/MarioStoilov/BtHandsfreeKDE/issues</url>
   <url type="vcs-browser">https://github.com/MarioStoilov/BtHandsfreeKDE</url>

@@ -85,6 +85,7 @@ flatpak run io.github.MarioStoilov.BtHandsfreeKDE
 flatpak run --command=flatpak-builder-lint org.flatpak.Builder manifest flatpak/io.github.MarioStoilov.BtHandsfreeKDE.yml
 busctl --user call org.pipewire.Telephony /org/pipewire/Telephony org.freedesktop.DBus.ObjectManager GetManagedObjects
                                                 # inspect the live telephony objects while debugging
+uv run bt-handsfree-kde tel:+15550100           # while the app runs: hands the number to it and exits
 ```
 
 ## Architecture
@@ -111,15 +112,21 @@ The D-Bus surface the app consumes (verified against PipeWire 1.6 / WirePlumber 
 - **Desktop integration**: the app *serves* `org.kde.StatusNotifierItem` and
   `com.canonical.dbusmenu` itself (see `SCOPE.md`, "Tray icon and menu") and *consumes*
   `org.freedesktop.Notifications` for incoming calls and new messages.
+- **Own name** `io.github.MarioStoilov.BtHandsfreeKDE` (session bus): the running
+  instance owns it and serves `ShowDialpad(s number)` on
+  `/io/github/MarioStoilov/BtHandsfreeKDE`; a second launch (the `tel:` handler) calls it
+  and exits.
 - **Properties set by the app are read back** after `Set`: PipeWire emits
   `PropertiesChanged` for volumes but not for `RejectSCO`.
 
 ### Module layout (`src/bt_handsfree_kde/`)
 
 - `__init__.py`: `APPLICATION_ID`, `APPLICATION_NAME`, `__version__`.
-- `__main__.py`: argument parsing, `QApplication`, qasync event loop, runs `HandsfreeApplication`.
-- `app.py`: `HandsfreeApplication`, the only place that wires clients to UI; owns the
-  call-duration timer and decides between call notifications and the fallback window.
+- `__main__.py`: argument parsing (`tel:` URIs), `QApplication`, qasync event loop, runs
+  `HandsfreeApplication` and returns its exit code.
+- `app.py`: `HandsfreeApplication`, the only place that wires clients to UI; claims the
+  single instance or hands the launch over and quits; owns the call-duration timer and
+  decides between call notifications and the fallback window.
 - `telephony.py`: `TelephonyClient` (**reference implementation** for the coding
   standards), `AudioGateway`, `Call`, call-state constants, `TelephonyError`.
 - `bluez.py`: `PhoneInfoClient`, `PhoneInfo` (alias, connected, battery).
@@ -127,6 +134,12 @@ The D-Bus surface the app consumes (verified against PipeWire 1.6 / WirePlumber 
   capability check.
 - `call_window.py`: `CallWindow`, always-on-top window for the shown call: icon buttons
   (Answer / Reject or Hold / Hang up) and the collapsible DTMF dialpad.
+- `dialpad_window.py`: `DialpadWindow`, number field, phone chooser (several phones only),
+  keypad and Call button; keys send DTMF while the chosen phone has an active call.
+- `keypad.py`: the 12-key grid and its font, shared by the call window and the dialpad.
+- `phone_numbers.py`: `dial_string_from_text`, `number_from_tel_uri` (RFC 3966).
+- `instance.py`: `SingleInstance`, `InstanceService` (`ShowDialpad`) on the app's own bus
+  name; the hand-off call a second launch makes.
 - `settings_window.py`: `SettingsWindow`, per-phone volume sliders, audio routing, codec.
 - `dtmf.py`: DTMF tone synthesis and `DtmfTonePlayer` (libpulse-simple via ctypes, one
   short thread per key press).

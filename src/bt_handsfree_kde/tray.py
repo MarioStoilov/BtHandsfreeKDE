@@ -46,6 +46,7 @@ HANGUP_ICON = "call-stop"
 HOLD_ICON = "media-playback-pause"
 RESUME_ICON = "media-playback-start"
 PHONE_ICON = "smartphone"
+DIALPAD_ICON = "input-dialpad"
 SPEAKER_ICON = "audio-volume-high"
 MICROPHONE_ICON = "audio-input-microphone"
 QUIT_ICON = "application-exit"
@@ -70,6 +71,8 @@ class HandsfreeTray(QObject):
     audio_on_computer_toggled = Signal(str, bool)
     # The volume entries open the settings window.
     settings_requested = Signal()
+    # The Dialpad entry opens the dialpad window.
+    dialpad_requested = Signal()
     quit_requested = Signal()
 
     def __init__(
@@ -223,6 +226,11 @@ class HandsfreeTray(QObject):
             menu_items.append(MenuItem.separator())
             menu_items.extend(self._gateway_items(gateway))
             menu_items.append(MenuItem.separator())
+
+        # Windows that are not tied to one phone come after the phone sections.
+        dialpad_item = MenuItem("Dialpad", DIALPAD_ICON, on_activated=self.dialpad_requested.emit)
+        menu_items.append(dialpad_item)
+        menu_items.append(MenuItem.separator())
 
         menu_items.append(quit_item)
 

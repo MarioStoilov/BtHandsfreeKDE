@@ -1,15 +1,11 @@
 """Always-on-top window for the call in progress: caller, duration, icon buttons, dialpad."""
 
-from functools import partial
-
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QFont, QIcon
 from PySide6.QtWidgets import (
-    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QSizePolicy,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -17,6 +13,7 @@ from PySide6.QtWidgets import (
 
 from bt_handsfree_kde import APPLICATION_NAME
 from bt_handsfree_kde.dtmf import DtmfTonePlayer
+from bt_handsfree_kde.keypad import build_keypad, keypad_font
 from bt_handsfree_kde.telephony import CALL_STATE_HELD, Call
 
 # Theme icon names for the buttons (all present in Breeze).
@@ -28,15 +25,8 @@ DIALPAD_ICON = "input-dialpad"
 CLEAR_ICON = "edit-clear"
 # Pixel size of the button icons.
 BUTTON_ICON_SIZE = 32
-# Keys of the DTMF dialpad in display order, three per row.
-DIALPAD_KEYS = ("1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#")
-DIALPAD_COLUMNS = 3
 # Point size of the caller name.
 CALLER_FONT_POINT_SIZE = 14
-# Point size of the keys and of the field showing the keys pressed so far.
-DIALPAD_FONT_POINT_SIZE = 16
-# Minimum key size in pixels, so the pad is comfortable to hit with a mouse.
-DIALPAD_KEY_SIZE = 48
 
 
 class CallWindow(QWidget):
@@ -147,12 +137,11 @@ class CallWindow(QWidget):
     def _build_dialpad(self) -> QWidget:
         """Create the DTMF keypad with a phone-style display of the keys pressed so far."""
         dialpad = QWidget(self)
-        dialpad_font = QFont()
-        dialpad_font.setPointSize(DIALPAD_FONT_POINT_SIZE)
+        display_font = keypad_font()
 
         self._sent_tones = QLineEdit(dialpad)
         self._sent_tones.setReadOnly(True)
-        self._sent_tones.setFont(dialpad_font)
+        self._sent_tones.setFont(display_font)
         self._sent_tones.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._sent_tones.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         clear_button = QToolButton(dialpad)
@@ -165,16 +154,7 @@ class CallWindow(QWidget):
         display_row.addWidget(self._sent_tones)
         display_row.addWidget(clear_button)
 
-        key_grid = QGridLayout()
-        for key_index, key in enumerate(DIALPAD_KEYS):
-            row, column = divmod(key_index, DIALPAD_COLUMNS)
-            key_button = QToolButton(dialpad)
-            key_button.setText(key)
-            key_button.setFont(dialpad_font)
-            key_button.setMinimumSize(DIALPAD_KEY_SIZE, DIALPAD_KEY_SIZE)
-            key_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-            key_button.clicked.connect(partial(self._send_tone, key))
-            key_grid.addWidget(key_button, row, column)
+        key_grid = build_keypad(dialpad, self._send_tone)
 
         dialpad_column = QVBoxLayout(dialpad)
         dialpad_column.addLayout(display_row)
