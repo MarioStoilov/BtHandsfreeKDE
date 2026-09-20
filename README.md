@@ -1,7 +1,7 @@
 # BT Handsfree
 
 A KDE Plasma tray application that turns your Linux desktop into a Bluetooth hands-free
-unit for a phone (Android or iOS). Incoming calls arrive as notifications with Answer and
+unit for a phone. Incoming calls arrive as notifications with Answer and
 Reject buttons. A call in progress gets a small always-on-top window with the caller,
 the running duration, Hold and Hang up buttons and a collapsible DTMF dialpad. The main
 window has a Dialpad tab and a Contacts tab. The dialpad places calls; clicking a `tel:`
@@ -20,6 +20,11 @@ Planned: sending messages.
 The full feature list, how each maps onto the Bluetooth stack, and the known
 shortcomings are in [`SCOPE.md`](SCOPE.md).
 
+> **Tested on Android only.** Everything here was developed and verified against one
+> Android phone (Samsung). iOS should work over the same Bluetooth profiles but has not
+> been tried; caller names, the contact and message permission prompts and the message
+> limits described in `SCOPE.md` are expected to differ.
+>
 > **Full disclosure:** this is a vibe-coded app. I wanted my phone's calls on my
 > desktop and had an AI assistant write it with me, step by step, against a real phone.
 > It works for me. It may work for you too — but set your expectations accordingly.
@@ -41,7 +46,7 @@ phone but does not publish it on D-Bus, so the tray shows battery only. See `SCO
 ## Install
 
 Flatpak on Flathub is the intended distribution channel; the first submission is
-tracked as build step 5 in `SCOPE.md`. Until then, run from source or build the Flatpak
+tracked as build step 11 in `SCOPE.md`. Until then, run from source or build the Flatpak
 locally.
 
 ## Running locally in development mode

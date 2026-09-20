@@ -135,7 +135,9 @@ widget into `ui/`, and a feature that grows beyond one module gets its own packa
 types; nothing imports from `ui/` except `app.py`. Feature packages talk to obexd only
 through `dbus/obex.py`.
 
-- `__init__.py`: `APPLICATION_ID`, `APPLICATION_NAME`, `__version__`.
+- `__init__.py`: `APPLICATION_ID`, `APPLICATION_NAME`, `APPLICATION_DESCRIPTION`,
+  `__version__`, the repository, issues and license URLs, license name and copyright
+  holder.
 - `__main__.py`: argument parsing (`tel:` URIs), `QApplication`, qasync event loop, runs
   `HandsfreeApplication` and returns its exit code.
 - `app.py`: `HandsfreeApplication`, the only place that wires clients to UI; claims the
@@ -183,6 +185,8 @@ through `dbus/obex.py`.
 - `phone_numbers.py`: `dial_string_from_text`, `number_from_tel_uri` (RFC 3966),
   `digits_of`, `same_number` (national vs international matching rule).
 - `ui/settings_window.py`: `SettingsWindow`, per-phone volume sliders, audio routing, codec.
+- `ui/about_window.py`: `AboutWindow`; icon, name, version, description, links,
+  disclosure, Close.
 - `dtmf.py`: DTMF tone synthesis and `DtmfTonePlayer` (libpulse-simple via ctypes, one
   short thread per key press).
 - `ui/tray.py`: `HandsfreeTray`; builds the `MenuItem` tree and icon/tooltip/status from

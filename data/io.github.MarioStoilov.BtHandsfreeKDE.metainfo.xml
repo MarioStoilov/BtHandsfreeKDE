@@ -22,7 +22,12 @@
     <p>
       The app relies on PipeWire's native Bluetooth hands-free support and its telephony
       D-Bus service, so it needs PipeWire 1.4 or newer configured with the native HFP
-      backend. It works with Android and iOS phones.
+      backend.
+    </p>
+    <p>
+      Developed and tested with one Android phone. iPhones use the same Bluetooth
+      profiles and should work for calls, but have not been tried; contacts and
+      messages depend on iOS permissions and expose less.
     </p>
   </description>
   <launchable type="desktop-id">io.github.MarioStoilov.BtHandsfreeKDE.desktop</launchable>

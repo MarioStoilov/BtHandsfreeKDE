@@ -8,7 +8,7 @@ import sys
 import qasync
 from PySide6.QtWidgets import QApplication
 
-from bt_handsfree_kde import APPLICATION_ID, APPLICATION_NAME, __version__
+from bt_handsfree_kde import APPLICATION_DESCRIPTION, APPLICATION_ID, APPLICATION_NAME, __version__
 from bt_handsfree_kde.app import HandsfreeApplication
 
 # Log line layout for stderr; timestamps help correlate with journal output.
@@ -26,7 +26,7 @@ def main() -> int:
     """
     argument_parser = argparse.ArgumentParser(
         prog="bt-handsfree-kde",
-        description="Bluetooth hands-free call controller for the KDE Plasma system tray.",
+        description=APPLICATION_DESCRIPTION,
     )
     argument_parser.add_argument(
         "--verbose", action="store_true", help="log D-Bus traffic details at DEBUG level"

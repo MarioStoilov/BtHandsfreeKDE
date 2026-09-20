@@ -174,6 +174,12 @@ phone delivers over Bluetooth:
 - **Settings window**: one group per connected phone with a speaker slider and a
   microphone slider over the HFP gain range (0–15, shown as %), the audio routing
   checkbox and the negotiated codec while an audio link is open.
+- **About window** (`ui/about_window.py`, tray entry "About BT Handsfree" below
+  Messages): application icon, name, version from `__version__`, the one-line
+  description, links to the repository, the issue tracker and the MIT license, the
+  copyright line, the vibe-coded disclosure from the README, and a Close button. The
+  URLs live once in `bt_handsfree_kde/__init__.py` and are mirrored in pyproject.toml
+  and the MetaInfo file.
 
 ## Known shortcomings
 
@@ -195,6 +201,9 @@ phone delivers over Bluetooth:
 - BlueZ with obexd (`bluez-obexd` on Debian/Ubuntu) for contacts and messages.
 - A desktop with StatusNotifierItem and a freedesktop notification server; developed on
   KDE Plasma 6.
+- Tested against one Android phone (Samsung, One UI) only. iOS is untested: same D-Bus
+  surface, but caller-name delivery, the permission prompts for contacts and messages
+  and the MAP limits under Messages are expected to differ.
 
 ## Build order
 
@@ -206,7 +215,53 @@ is reported done.
 2. Dialpad window with DTMF, `tel:` handler, single instance over D-Bus.
 3. Contacts sync window; caller-ID name lookup on incoming calls and in notifications.
 4. Messages tab; new-message notifications.
-5. Flathub submission: git-pinned manifest, screenshot, first release.
+5. **About window.** A tray entry "About BT Handsfree" below Messages opens a window
+   with the application icon, name and version, the one-line description, links to
+   the repository, the issue tracker and the MIT license text, the vibe-coded
+   disclosure from the README, and a Close button, in the shape of simpleStonks' about
+   dialog. Version comes from `__version__`.
+6. **Platform note.** README and the MetaInfo description state that every feature was
+   developed and tested against one Android phone (Samsung, One UI) and that iOS is
+   untested: the D-Bus surface is the same, but caller-name delivery, the contact and
+   message permission prompts and the MAP limits described under Messages are
+   expected to differ. Done when the wording is in both files.
+7. **Automated tests.** pytest with three layers. Unit tests for the pure modules
+   (`phone_numbers`, `contacts/vcard`, `contacts/phonebook`, `messages/bmessage`,
+   `messages/message`, `messages/conversations`, `dbusmenu` shape and numbering).
+   Widget tests under the offscreen Qt platform for the pages, the main window, the call
+   window and the tray's menu tree. Integration tests that start a private
+   `dbus-daemon`, export fake `org.pipewire.Telephony`, `org.bluez.obex` and
+   `org.freedesktop.Notifications` services with dbus-fast and drive the real clients
+   through call lifecycles, a PBAP pull, a MAP listing and a pushed message, and the
+   single-instance hand-off. The convention in CLAUDE.md that defers tests until the
+   client layer is stable is replaced by "every change comes with its tests" in the
+   same step. Done when `uv run pytest` is green and runs in the Flatpak build too.
+8. **Disconnect and reconnect.** Define and verify what happens when: the phone
+   disconnects and reconnects (gateway removed and added: phonebook and messages are
+   dropped and synced again, a call in progress is closed everywhere, notifications
+   are withdrawn); WirePlumber restarts (telephony name lost and regained: the client
+   re-synchronises, gateways reappear and trigger the same syncs); obexd restarts or
+   drops the MAP session (the messages state says the connection was lost and the next
+   connect or Refresh reopens it); BlueZ restarts (phone names and battery return on
+   their own). Each case is exercised on the host by toggling Bluetooth on the phone
+   and restarting the services, and the observed outcome is stated.
+9. **Several phones.** The tray already has one section per phone and the main window
+   a chooser; the rest is defined here: notifications name the phone when more than
+   one is connected; the `tel:` hand-off dials from the phone selected in the chooser;
+   per-phone syncs run one at a time so two phones do not compete for obexd; a second
+   phone connecting while a call is up does not disturb the call window. Verified
+   with the fake telephony service from step 7 exposing two gateways, and on the host
+   when a second phone is available.
+10. **Startup dependency check.** On launch, before the tray appears, the app checks
+    what it depends on and tells the user what is missing or failed, then keeps
+    running with the features that work: PipeWire's telephony name on the session bus
+    (owned or activatable, and PipeWire 1.4 or newer), BlueZ on the system bus, obexd
+    activatable on the session bus, a notification server with actions, a
+    StatusNotifierWatcher, and libpulse-simple for key tones. The result is shown as a
+    notification plus a window listing each missing item with the distro package or
+    setting that provides it (the same names as in the README), and in the tray
+    tooltip while it lasts. Checks are repeated when a name appears or leaves the bus.
+11. Flathub submission: git-pinned manifest, screenshot, first release.
 
 Later, unscheduled: sending messages, reception once PipeWire exposes it.
 

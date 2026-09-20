@@ -49,6 +49,7 @@ PHONE_ICON = "smartphone"
 DIALPAD_ICON = "input-dialpad"
 CONTACTS_ICON = "view-pim-contacts"
 MESSAGES_ICON = "mail-message"
+ABOUT_ICON = "help-about"
 SPEAKER_ICON = "audio-volume-high"
 MICROPHONE_ICON = "audio-input-microphone"
 QUIT_ICON = "application-exit"
@@ -77,6 +78,8 @@ class HandsfreeTray(QObject):
     dialpad_requested = Signal()
     contacts_requested = Signal()
     messages_requested = Signal()
+    # The About entry opens the About window.
+    about_requested = Signal()
     quit_requested = Signal()
 
     def __init__(
@@ -250,9 +253,13 @@ class HandsfreeTray(QObject):
             key="messages",
             on_activated=self.messages_requested.emit,
         )
+        about_item = MenuItem(
+            f"About {APPLICATION_NAME}", ABOUT_ICON, on_activated=self.about_requested.emit
+        )
         menu_items.append(dialpad_item)
         menu_items.append(contacts_item)
         menu_items.append(messages_item)
+        menu_items.append(about_item)
         menu_items.append(MenuItem.separator())
 
         menu_items.append(quit_item)

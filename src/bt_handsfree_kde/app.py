@@ -44,6 +44,7 @@ from bt_handsfree_kde.messages.client import MessagesClient, MessagesState
 from bt_handsfree_kde.messages.conversations import Conversation, group_conversations
 from bt_handsfree_kde.messages.message import TextMessage
 from bt_handsfree_kde.phone_numbers import number_from_tel_uri
+from bt_handsfree_kde.ui.about_window import AboutWindow
 from bt_handsfree_kde.ui.call_window import CallWindow
 from bt_handsfree_kde.ui.main_window import MainWindow
 from bt_handsfree_kde.ui.settings_window import SettingsWindow
@@ -113,6 +114,7 @@ class HandsfreeApplication(QObject):
         self._call_window = CallWindow()
         self._settings_window = SettingsWindow()
         self._main_window = MainWindow()
+        self._about_window = AboutWindow()
         self._status_timer = QTimer(self)
         self._status_timer.setInterval(CALL_STATUS_REFRESH_INTERVAL_MS)
 
@@ -176,6 +178,7 @@ class HandsfreeApplication(QObject):
         self._tray.dialpad_requested.connect(self._show_dialpad)
         self._tray.contacts_requested.connect(self._show_contacts)
         self._tray.messages_requested.connect(self._show_messages)
+        self._tray.about_requested.connect(self._about_window.show_and_raise)
         self._tray.call_focus_requested.connect(self._focus_call)
 
         # The notifier, BlueZ, the tray and the obexd client come up before telephony so
