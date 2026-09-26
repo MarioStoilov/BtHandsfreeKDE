@@ -140,6 +140,7 @@ class ObexClient(QObject):
         # Futures resolved with the final status of the transfer at each path.
         self._transfer_waiter_by_path: dict[str, asyncio.Future[str]] = {}
         self._transfer_directory = obex_transfer_directory()
+        self._sync_lock = asyncio.Lock()
 
     async def start(self) -> None:
         """Subscribe to obexd's object and property signals and follow its bus name.
@@ -162,6 +163,17 @@ class ObexClient(QObject):
             f"type='signal',sender='{OBEX_BUS_NAME}',interface='{OBJECT_MANAGER_INTERFACE}'",
         )
         await add_signal_match(self._bus, name_owner_changed_match_rule(OBEX_BUS_NAME))
+
+    @property
+    def sync_lock(self) -> asyncio.Lock:
+        """Return the lock a feature holds while it syncs one phone.
+
+        A phonebook pull and a message listing each hold it for their duration, so the
+        syncs of several phones, and of both features, reach obexd one at a time
+        instead of opening channels to two phones at once. Fetching a single message
+        or marking one read does not take it.
+        """
+        return self._sync_lock
 
     def owns_session(self, session_path: str) -> bool:
         """Tell whether `session_path` is a session this client created and still holds."""

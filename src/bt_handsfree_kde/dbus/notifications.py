@@ -31,6 +31,8 @@ OPEN_MESSAGE_ACTION = "open-message"
 INCOMING_CALL_CATEGORY = "call.incoming"
 RECEIVED_MESSAGE_CATEGORY = "im.received"
 
+# Separator between a notification's summary and the phone it concerns.
+PHONE_LABEL_SEPARATOR = " · "
 # Urgency levels defined by the notification specification.
 URGENCY_LOW = 0
 URGENCY_NORMAL = 1
@@ -93,11 +95,21 @@ class DesktopNotifier(QObject):
             self._supports_persistence,
         )
 
-    async def show_incoming_call(self, call_path: str, caller_label: str) -> None:
-        """Show (or refresh) the critical, non-expiring notification for a ringing call."""
+    async def show_incoming_call(
+        self, call_path: str, caller_label: str, phone_label: str = ""
+    ) -> None:
+        """Show (or refresh) the critical, non-expiring notification for a ringing call.
+
+        Args:
+            call_path: Key the `action_invoked` signal reports for the buttons.
+            caller_label: Name or number of the caller.
+            phone_label: Name of the phone the call is on, added to the title when
+                given; empty when only one phone is connected.
+        """
+        summary = _summary_with_phone("Incoming call", phone_label)
         await self._show_with_actions(
             call_path,
-            "Incoming call",
+            summary,
             caller_label,
             [ANSWER_ACTION, "Answer", REJECT_ACTION, "Reject"],
             URGENCY_CRITICAL,
@@ -106,17 +118,22 @@ class DesktopNotifier(QObject):
             expiry_ms=NEVER_EXPIRE_MS,
         )
 
-    async def show_new_message(self, message_path: str, sender_label: str, preview: str) -> None:
+    async def show_new_message(
+        self, message_path: str, sender_label: str, preview: str, phone_label: str = ""
+    ) -> None:
         """Show a normal-urgency notification for a received message with an Open button.
 
         Args:
             message_path: Key the `action_invoked` signal reports for the Open button.
             sender_label: Contact name or address of the sender.
             preview: Start of the message text.
+            phone_label: Name of the phone that received the message, added to the
+                title when given; empty when only one phone is connected.
         """
+        summary = _summary_with_phone(sender_label, phone_label)
         await self._show_with_actions(
             message_path,
-            sender_label,
+            summary,
             preview,
             [OPEN_MESSAGE_ACTION, "Open"],
             URGENCY_NORMAL,
@@ -248,6 +265,14 @@ class DesktopNotifier(QObject):
         known_id = self._notification_id_by_key.get(key)
         if known_id == notification_id:
             del self._notification_id_by_key[key]
+
+
+def _summary_with_phone(summary: str, phone_label: str) -> str:
+    """Append the phone's name to a notification title when one is given."""
+    if not phone_label:
+        return summary
+
+    return f"{summary}{PHONE_LABEL_SEPARATOR}{phone_label}"
 
 
 def _hints(urgency: int, resident: bool, category: str) -> dict[str, Any]:

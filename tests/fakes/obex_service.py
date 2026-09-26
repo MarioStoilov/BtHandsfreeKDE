@@ -69,6 +69,9 @@ class ObexRecords:
 
     created_sessions: list[tuple[str, str]] = field(default_factory=list)
     removed_sessions: list[str] = field(default_factory=list)
+    # ("created" | "removed", destination, target) in the order they happened, for
+    # checking that sessions of different phones do not overlap.
+    session_events: list[tuple[str, str, str]] = field(default_factory=list)
     pull_filters: list[dict[str, Any]] = field(default_factory=list)
     selected_phonebooks: list[tuple[str, str]] = field(default_factory=list)
     set_folders: list[str] = field(default_factory=list)
@@ -266,6 +269,7 @@ class FakeObexService:
         self._next_session_number = 0
         self._next_transfer_number = 0
         self._child_paths_by_session: dict[str, list[str]] = {}
+        self._destination_and_target_by_session: dict[str, tuple[str, str]] = {}
         self._message_path_by_handle: dict[tuple[str, str], str] = {}
         self._map_session_paths: list[str] = []
         self._is_client_exported = False
@@ -314,7 +318,9 @@ class FakeObexService:
         session_path = f"{OBEX_CLIENT_PATH}/client/session{self._next_session_number}"
         self._next_session_number += 1
         self.records.created_sessions.append((destination, target))
+        self.records.session_events.append(("created", destination, target))
         self._child_paths_by_session[session_path] = []
+        self._destination_and_target_by_session[session_path] = (destination, target)
 
         self._bus.export(session_path, FakeSession(destination, target))
         if target == PBAP_TARGET:
@@ -330,6 +336,10 @@ class FakeObexService:
         child_paths = self._child_paths_by_session.pop(session_path, [])
         for child_path in child_paths:
             self._bus.unexport(child_path)
+        session_identity = self._destination_and_target_by_session.pop(session_path, None)
+        if session_identity is not None:
+            destination, target = session_identity
+            self.records.session_events.append(("removed", destination, target))
         for handle_key in list(self._message_path_by_handle):
             if handle_key[0] == session_path:
                 del self._message_path_by_handle[handle_key]

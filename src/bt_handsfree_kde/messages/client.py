@@ -206,12 +206,18 @@ class MessagesClient(QObject):
             self._replace_message(address_key, replace(message, is_read=True))
 
     async def _sync(self, address_key: str, delay_seconds: float) -> None:
-        """Open the session when needed, list the folders and store the outcome."""
+        """Open the session when needed, list the folders and store the outcome.
+
+        Opening and listing wait for the shared obexd sync lock, so they never run
+        alongside another phone's pull or listing; the session stays open afterwards
+        without holding the lock.
+        """
         try:
             if delay_seconds > 0:
                 await asyncio.sleep(delay_seconds)
-            session_path = await self._ensure_session(address_key)
-            messages = await self._list_messages(session_path)
+            async with self._obex.sync_lock:
+                session_path = await self._ensure_session(address_key)
+                messages = await self._list_messages(session_path)
         except asyncio.CancelledError:
             raise
         except MessagesError as messages_error:

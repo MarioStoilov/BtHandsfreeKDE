@@ -30,6 +30,9 @@ WAIT_POLL_S = 0.01
 PHONE_ADDRESS = "AA:BB:CC:DD:EE:01"
 # Name BlueZ reports for the fake phone.
 PHONE_ALIAS = "Test phone"
+# A second fake phone, for the several-phones cases (fictional).
+SECOND_PHONE_ADDRESS = "AA:BB:CC:DD:EE:02"
+SECOND_PHONE_ALIAS = "Other phone"
 
 # Configuration of the private daemon: a session-type bus on a private socket with no
 # service directories, so nothing can be activated, and an open default policy.

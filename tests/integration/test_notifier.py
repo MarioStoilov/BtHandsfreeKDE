@@ -35,6 +35,9 @@ async def test_incoming_call_notification_round_trip(
     await notifier.show_incoming_call(CALL_PATH, "Alice Doe")
     assert notifications.shown[1].replaces_id == shown.notification_id
 
+    await notifier.show_incoming_call(CALL_PATH, "Alice Doe", "Other phone")
+    assert notifications.shown[2].summary == "Incoming call · Other phone"
+
     notifications.press(shown.notification_id, ANSWER_ACTION)
     await wait_until(lambda: actions == [(CALL_PATH, ANSWER_ACTION)], "action")
 
@@ -54,6 +57,8 @@ async def test_message_notification_and_capability_gate(
     await notifier.show_new_message(MESSAGE_PATH, "Alice", "hello")
     shown = notifications.shown[0]
     assert shown.summary == "Alice" and shown.body == "hello"
+    await notifier.show_new_message(MESSAGE_PATH, "Alice", "hello", "Other phone")
+    assert notifications.shown[1].summary == "Alice · Other phone"
     assert shown.actions == [OPEN_MESSAGE_ACTION, "Open"]
     assert shown.hints["category"] == "im.received" and shown.hints["resident"] is False
     notifications.press(shown.notification_id, OPEN_MESSAGE_ACTION)

@@ -43,6 +43,8 @@ conversation on 2026-09-19 and are changed here, not in code comments.
 - When it syncs: automatically each time a phone connects over HFP, two seconds after
   the gateway appears so the phone is not asked for a second channel while it sets up
   the first, and on Refresh. A sync already running for that phone is not restarted.
+  Pulls and message listings of all phones share one lock on the obexd layer, so
+  with several phones they reach obexd one at a time (decision 2026-09-26).
 - What is kept: the phonebook lives in memory for the session only, per phone, and is
   dropped when the phone disconnects. Nothing is persisted (decision 2026-09-20).
 - Backend: obexd's Phonebook Access client (`org.bluez.obex`, session bus):
@@ -87,7 +89,9 @@ conversation on 2026-09-19 and are changed here, not in code comments.
   phonebook, else from the name the phone attached, else the address.
 - What is loaded: the 25 newest messages of the inbox and of the sent folder, when the
   phone connects (five seconds after the gateway appears, after the phonebook pull) and
-  on Refresh (decision 2026-09-20). In memory only, dropped on disconnect.
+  on Refresh (decision 2026-09-20). In memory only, dropped on disconnect. Opening the
+  session and listing hold the obexd sync lock shared with the phonebook pulls; the
+  open session does not.
 - Opening a conversation marks its unread messages as read on the phone
   (`Message1.Read = true`, decision 2026-09-20) and fetches the full text of messages
   whose listing preview may be cut (the listing's `Subject` is the SMS text up to 255
@@ -137,6 +141,12 @@ phone delivers over Bluetooth:
   the notifications of the messages it marks read.
 - **Phone connected / disconnected** and **telephony service unavailable**: low urgency,
   informational.
+- **Several phones**: while more than one phone is connected, the incoming-call and
+  new-message titles carry the phone's name after a separator ("Incoming call · Pixel",
+  "Alice Doe · Pixel"); with one phone the titles stay short. A second phone
+  connecting while a call is up redraws the tray and the main window only; the call
+  window keeps its call, its typed tones and its dialpad state. The `tel:` hand-off
+  and the Call buttons act on the phone picked in the main window's chooser.
 - Nothing beyond what Bluetooth carries: Android has no profile for mirroring app
   notifications, and iOS's ANCS would be a separate GATT client project. Out of scope.
 
@@ -295,7 +305,9 @@ is reported done.
    per-phone syncs run one at a time so two phones do not compete for obexd; a second
    phone connecting while a call is up does not disturb the call window. Verified
    with the fake telephony service from step 7 exposing two gateways, and on the host
-   when a second phone is available.
+   when a second phone is available. Defined under Notifications, "Several phones",
+   and in the sync bullets of Contacts and Messages (2026-09-26); the host run with a
+   second phone is listed under Pending verifications.
 10. **Startup dependency check.** On launch, before the tray appears, the app checks
     what it depends on and tells the user what is missing or failed, then keeps
     running with the features that work: PipeWire's telephony name on the session bus
@@ -334,6 +346,10 @@ the sandbox. Each is checked at the next opportunity that provides what it needs
   key beep, which could happen if WirePlumber makes the phone's HFP link the default
   sink while a call is up. If it leaks, playback is pinned to a local sink
   (`pa_simple_new` takes a device name) instead of the default.
+- **Two phones on the host** (step 9): with a second phone connected, the notification
+  titles name the phone, the chooser drives the hand-off and the syncs of the second
+  phone follow the first. Exercised with the fake services (two gateways) only; the
+  development host has one phone.
 - **Phone-side Bluetooth toggle during a call** (step 8): turning Bluetooth off on the
   phone while a call is up closes the call window and the incoming-call notification.
   The gateway removal and the re-syncs on reconnect were exercised without a call;

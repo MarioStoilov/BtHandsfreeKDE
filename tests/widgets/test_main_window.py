@@ -86,3 +86,19 @@ def test_show_methods_switch_tabs(qt_application, gateway, phone_info_by_address
     window.show_dialpad()
     assert window._tabs.currentWidget() is window._dialpad_page
     assert opened == []
+
+
+def test_handoff_dials_from_the_chosen_phone(
+    qt_application, gateway, phone_info_by_address
+) -> None:
+    """With two phones, a number handed over dials from the phone picked in the chooser."""
+    window = MainWindow()
+    dials: list[tuple[str, str]] = []
+    window.dial_requested.connect(lambda gateway_path, number: dials.append((gateway_path, number)))
+    window.update_state(True, [gateway, SECOND_GATEWAY], phone_info_by_address, {}, {}, {}, {})
+    window._phone_chooser.setCurrentIndex(1)
+
+    window.show_dialpad("+15550100")
+    window._dialpad_page._emit_dial()
+
+    assert dials == [(SECOND_GATEWAY.path, "+15550100")]

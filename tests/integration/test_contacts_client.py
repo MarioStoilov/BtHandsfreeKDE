@@ -12,7 +12,7 @@ from bt_handsfree_kde.contacts.client import (
     ContactsClient,
 )
 from bt_handsfree_kde.dbus.obex import ObexClient, obex_transfer_directory
-from tests.conftest import PHONE_ADDRESS, wait_until
+from tests.conftest import PHONE_ADDRESS, SECOND_PHONE_ADDRESS, wait_until
 from tests.fakes.obex_service import FakeObexService
 from tests.unit.test_vcard import VCARD_30_TEXT
 
@@ -114,3 +114,27 @@ async def test_forget_drops_the_phonebook(client_bus: MessageBus, obex: FakeObex
     contacts.forget(PHONE_ADDRESS)
 
     assert contacts.state_for_address(PHONE_ADDRESS).phonebook is None
+
+
+async def test_two_phones_are_pulled_one_at_a_time(
+    client_bus: MessageBus, obex: FakeObexService, monkeypatch, tmp_path
+) -> None:
+    """Pulls started together reach obexd in sequence: one session closes before the next opens."""
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    obex.phonebook_vcard = VCARD_30_TEXT
+    contacts = await _started_contacts(client_bus)
+
+    contacts.start_sync(PHONE_ADDRESS)
+    contacts.start_sync(SECOND_PHONE_ADDRESS)
+    await wait_until(
+        lambda: contacts.state_for_address(SECOND_PHONE_ADDRESS).sync_state == SYNC_STATE_SYNCED,
+        "second sync",
+    )
+
+    assert contacts.state_for_address(PHONE_ADDRESS).sync_state == SYNC_STATE_SYNCED
+    assert obex.records.session_events == [
+        ("created", PHONE_ADDRESS, "pbap"),
+        ("removed", PHONE_ADDRESS, "pbap"),
+        ("created", SECOND_PHONE_ADDRESS, "pbap"),
+        ("removed", SECOND_PHONE_ADDRESS, "pbap"),
+    ]

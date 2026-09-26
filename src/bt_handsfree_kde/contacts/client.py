@@ -159,11 +159,16 @@ class ContactsClient(QObject):
             self.phonebook_changed.emit(address_key)
 
     async def _sync(self, address_key: str, delay_seconds: float) -> None:
-        """Run one pull for `address_key` and store its outcome."""
+        """Run one pull for `address_key` and store its outcome.
+
+        The pull waits for the shared obexd sync lock, so it never runs alongside
+        another phone's pull or listing.
+        """
         try:
             if delay_seconds > 0:
                 await asyncio.sleep(delay_seconds)
-            phonebook = await self._pull_phonebook(address_key)
+            async with self._obex.sync_lock:
+                phonebook = await self._pull_phonebook(address_key)
         except asyncio.CancelledError:
             raise
         except ContactsError as contacts_error:

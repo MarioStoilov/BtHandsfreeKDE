@@ -18,7 +18,13 @@ from bt_handsfree_kde.dbus.telephony import CALL_STATE_INCOMING
 from bt_handsfree_kde.messages.client import CONNECTION_LOST_TEXT
 from bt_handsfree_kde.messages.client import SYNC_STATE_FAILED as MESSAGES_FAILED
 from bt_handsfree_kde.messages.client import SYNC_STATE_SYNCED as MESSAGES_SYNCED
-from tests.conftest import PHONE_ADDRESS, PHONE_ALIAS, wait_until
+from tests.conftest import (
+    PHONE_ADDRESS,
+    PHONE_ALIAS,
+    SECOND_PHONE_ADDRESS,
+    SECOND_PHONE_ALIAS,
+    wait_until,
+)
 from tests.fakes.bluez_service import FakeBlueZService
 from tests.fakes.notification_service import FakeNotificationService
 from tests.fakes.obex_service import FakeObexService
@@ -76,6 +82,23 @@ async def _wait_for_syncs(application: HandsfreeApplication) -> None:
     """Wait until the phone's phonebook and messages have both been synced."""
     await wait_until(lambda: _contacts_state(application) == CONTACTS_SYNCED, "phonebook")
     await wait_until(lambda: _messages_state(application) == MESSAGES_SYNCED, "messages")
+
+
+def _open_pbap_count_never_exceeds_one(session_events: list[tuple[str, str, str]]) -> bool:
+    """Tell whether the recorded PBAP sessions were open one at a time."""
+    open_pbap_count = 0
+
+    for event, _destination, target in session_events:
+        if target != "pbap":
+            continue
+        if event == "created":
+            open_pbap_count += 1
+        else:
+            open_pbap_count -= 1
+        if open_pbap_count > 1:
+            return False
+
+    return True
 
 
 def _summaries(notifications: FakeNotificationService) -> list[str]:
@@ -166,3 +189,54 @@ async def test_obexd_restart_is_reported_and_refresh_reconnects(
 
     await wait_until(lambda: _messages_state(application) == MESSAGES_SYNCED, "resynced")
     assert len(obex.open_map_session_paths) == 1
+
+
+async def test_second_phone_during_a_call(
+    application: HandsfreeApplication,
+    telephony: FakeTelephonyService,
+    bluez: FakeBlueZService,
+    obex: FakeObexService,
+    notifications: FakeNotificationService,
+) -> None:
+    """A second phone syncs after the first without touching the call window; alerts name phones."""
+    first_gateway_path = application._telephony.gateways[0].path
+    telephony.add_call(first_gateway_path, CALL_STATE_INCOMING, "+15550100")
+    await wait_until(lambda: "Incoming call" in _summaries(notifications), "call notification")
+    application._focus_call(f"{first_gateway_path}/call0")
+    call_window = application._call_window
+    assert call_window.shown_call_path == f"{first_gateway_path}/call0"
+
+    bluez.add_device(SECOND_PHONE_ADDRESS, SECOND_PHONE_ALIAS)
+    second_gateway_path = telephony.add_gateway(SECOND_PHONE_ADDRESS)
+    await wait_until(
+        lambda: (
+            application._contacts.state_for_address(SECOND_PHONE_ADDRESS).sync_state
+            == CONTACTS_SYNCED
+        ),
+        "second phonebook",
+    )
+    await wait_until(
+        lambda: (
+            application._messages.state_for_address(SECOND_PHONE_ADDRESS).sync_state
+            == MESSAGES_SYNCED
+        ),
+        "second messages",
+    )
+
+    assert call_window.shown_call_path == f"{first_gateway_path}/call0"
+    assert call_window.isVisible()
+    assert _open_pbap_count_never_exceeds_one(obex.records.session_events)
+    assert len(obex.open_map_session_paths) == 2
+    assert f"Incoming call · {PHONE_ALIAS}" in _summaries(notifications)
+
+    telephony.add_call(second_gateway_path, CALL_STATE_INCOMING, "+15550101")
+    await wait_until(
+        lambda: f"Incoming call · {SECOND_PHONE_ALIAS}" in _summaries(notifications),
+        "second call names its phone",
+    )
+    obex.push_message(PUSHED_MESSAGE)
+    await wait_until(
+        lambda: f"Alice Doe · {SECOND_PHONE_ALIAS}" in _summaries(notifications),
+        "message names its phone",
+    )
+    assert call_window.shown_call_path == f"{first_gateway_path}/call0"

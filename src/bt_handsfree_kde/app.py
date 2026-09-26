@@ -319,8 +319,9 @@ class HandsfreeApplication(QObject):
         conversation = self._conversation_containing(address, message.path)
         conversation_key = conversation.key if conversation is not None else ""
         self._message_notification_targets[message.path] = (address.upper(), conversation_key)
+        phone_label = self._phone_label_when_several(address)
 
-        self._run(self._notifier.show_new_message(message.path, sender_label, preview))
+        self._run(self._notifier.show_new_message(message.path, sender_label, preview, phone_label))
 
     def _on_conversation_opened(self, gateway_path: str, conversation_key: str) -> None:
         """Mark an opened conversation read on the phone and fetch its long messages."""
@@ -426,7 +427,10 @@ class HandsfreeApplication(QObject):
         for call in live_calls:
             is_focused = call.path == self._focused_call_path
             if call.is_incoming and notifications_supported:
-                self._run(self._notifier.show_incoming_call(call.path, call.caller_label))
+                phone_label = self._phone_label_for_gateway_when_several(call.gateway_path)
+                self._run(
+                    self._notifier.show_incoming_call(call.path, call.caller_label, phone_label)
+                )
                 if is_focused:
                     window_candidates.append(call)
             else:
@@ -644,6 +648,26 @@ class HandsfreeApplication(QObject):
             return address
 
         return phone_info.alias
+
+    def _phone_label_when_several(self, address: str) -> str:
+        """Return the phone's label for a notification, or empty with a single phone.
+
+        Call and message notifications name their phone only when the user has more
+        than one connected, so the common case stays short.
+        """
+        has_several_phones = len(self._telephony.gateways) > 1
+        if not has_several_phones:
+            return ""
+
+        return self._phone_label(address)
+
+    def _phone_label_for_gateway_when_several(self, gateway_path: str) -> str:
+        """Return the label of the phone at `gateway_path` for a notification, see above."""
+        gateway = self._telephony.gateway_for(gateway_path)
+        if gateway is None:
+            return ""
+
+        return self._phone_label_when_several(gateway.address)
 
     def _answer_call(self, call_path: str) -> None:
         """Answer `call_path`, holding an active call first when the phone has one."""
