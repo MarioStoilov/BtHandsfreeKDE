@@ -198,6 +198,17 @@ class HandsfreeApplication(QObject):
             launch_number = self._number_from_launch_uris()
             self._show_dialpad(launch_number)
 
+    def stop(self) -> None:
+        """Close the bus connections once the Qt loop has finished.
+
+        obexd drops the app's sessions and the tray icon disappears as a consequence of
+        the session connection closing; nothing is sent first.
+        """
+        self._phones.stop()
+        if self._session_bus is not None:
+            self._session_bus.disconnect()
+            self._session_bus = None
+
     async def _hand_off_and_quit(self) -> None:
         """Pass the launch request to the running instance, then quit this process."""
         launch_number = self._number_from_launch_uris()
@@ -243,7 +254,10 @@ class HandsfreeApplication(QObject):
         """Redraw, announce phones that connected or disconnected, and sync their data.
 
         A phone that just connected gets its phonebook pulled and its message session
-        opened after short delays; a phone that disconnected has both dropped.
+        opened after short delays; a phone that disconnected has both dropped, along
+        with the new-message notifications that would open its conversations. Its
+        calls were withdrawn by the telephony client before this point, which closed
+        their notifications.
         """
         current_addresses: set[str] = set()
         for gateway in self._telephony.gateways:
@@ -263,8 +277,22 @@ class HandsfreeApplication(QObject):
             self._run(self._notifier.show_information("Phone disconnected", phone_label))
             self._contacts.forget(address)
             self._messages.forget(address)
+            self._withdraw_message_notifications(address)
 
         self._refresh_views()
+
+    def _withdraw_message_notifications(self, address: str) -> None:
+        """Close the new-message notifications shown for the phone at `address`."""
+        address_key = address.upper()
+        withdrawn_message_paths: list[str] = []
+        for message_path, target in self._message_notification_targets.items():
+            target_address = target[0]
+            if target_address == address_key:
+                withdrawn_message_paths.append(message_path)
+
+        for message_path in withdrawn_message_paths:
+            del self._message_notification_targets[message_path]
+            self._run(self._notifier.close_for_key(message_path))
 
     def _on_phonebook_changed(self, _address: str) -> None:
         """Redraw once a phonebook arrives, so calls and the tabs show the names."""

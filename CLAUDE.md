@@ -147,7 +147,9 @@ through `dbus/obex.py`.
   from the phonebooks before a call reaches any view, groups messages into
   conversations, and turns pushed messages into notifications.
 - `dbus/helpers.py`: `call_method`, `set_property`, `add_signal_match`,
-  `name_has_owner`, `unwrap_variant`, `DBusRequestError` (carries the D-Bus error name).
+  `name_has_owner`, `name_owner_changed_match_rule` / `is_name_owner_changed` (every
+  client follows its service's bus name through restarts), `unwrap_variant`,
+  `DBusRequestError` (carries the D-Bus error name).
 - `dbus/telephony.py`: `TelephonyClient` (**reference implementation** for the coding
   standards), `AudioGateway`, `Call`, call-state constants, `TelephonyError`.
 - `dbus/bluez.py`: `PhoneInfoClient`, `PhoneInfo` (alias, connected, battery).

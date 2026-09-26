@@ -148,6 +148,49 @@ phone delivers over Bluetooth:
 - Call state changes arrive through `PropertiesChanged`; call creation and removal through
   `InterfacesAdded` / `InterfacesRemoved` on `/org/pipewire/Telephony`.
 
+### 6. Disconnect and reconnect
+
+What happens when a link or a service goes away, defined and verified on 2026-09-26.
+The app never has to be restarted; whatever comes back is picked up from the bus.
+
+- **The phone disconnects** (gateway withdrawn by WirePlumber): its calls are dropped,
+  which closes the call window and the incoming-call notification; its phonebook and
+  messages are dropped, its MAP session removed, and the new-message notifications
+  that would open its conversations are closed; a "Phone disconnected" notification is
+  shown. Should the service withdraw the gateway before its calls, the client drops
+  the calls itself so none outlives its phone. **Reconnecting** is a new gateway: a
+  "Phone connected" notification and the same phonebook pull and message listing as
+  on the first connect, with the same delays.
+- **WirePlumber restarts** (`org.pipewire.Telephony` leaves and returns): the loss
+  clears every gateway and call, shows "Telephony service unavailable" and one
+  "Phone disconnected" per phone, and drops the phones' data as above. The return
+  re-reads the object tree and announces its calls as removed, changed or added
+  against what was known, so a gateway that is already back triggers the syncs, and
+  one that reconnects later does the same when it appears. Observed on the host: the
+  phone's HFP link drops with WirePlumber and comes back by itself about a second
+  later; the phonebook and messages were synced again within ten seconds.
+- **obexd restarts or drops the MAP session**: obexd emits no removal signals when it
+  dies, so the app follows its bus name and treats every session it held as removed
+  when the name goes; a session removed while obexd lives arrives as
+  `InterfacesRemoved`. Either way the messages already listed are kept, the state says
+  "The messages connection to the phone was lost. Refresh to reconnect.", a transfer
+  in flight ends as failed at once instead of waiting for its timeout, and the next
+  connect or Refresh opens a new session. A phonebook pull cut the same way reports a
+  lost connection too. Observed on the host with `systemctl --user restart obex`.
+- **BlueZ restarts** (`org.bluez` leaves and returns on the system bus): the loss
+  reports every device as disconnected without battery, so names and battery leave
+  the tray; the return re-reads the device list and they come back. BlueZ absent at
+  startup is handled the same way: the devices load when the name appears. Observed
+  on the host with `sudo systemctl restart bluetooth`: the gateway went first, the
+  name left and returned within a tenth of a second with an empty device list (BlueZ
+  loads devices after claiming its name, so they arrived as `InterfacesAdded`), the
+  phone reconnected a few seconds later, both syncs ran, and the tray tooltip showed
+  the phone's name and battery again.
+- Each case is covered by an integration test against the fakes (`tests/integration/`,
+  `test_application.py` for the wiring). On the host, the obexd, WirePlumber and
+  BlueZ restarts and a phone reconnect were run (outcomes above); the phone-side
+  Bluetooth toggle during a call is listed under Pending verifications.
+
 ## Tray icon and menu
 
 - The icon reflects call state (idle, incoming, active). The tooltip shows the phone's
@@ -244,7 +287,8 @@ is reported done.
    drops the MAP session (the messages state says the connection was lost and the next
    connect or Refresh reopens it); BlueZ restarts (phone names and battery return on
    their own). Each case is exercised on the host by toggling Bluetooth on the phone
-   and restarting the services, and the observed outcome is stated.
+   and restarting the services, and the observed outcome is stated. Defined under
+   "Disconnect and reconnect" in Features.
 9. **Several phones.** The tray already has one section per phone and the main window
    a chooser; the rest is defined here: notifications name the phone when more than
    one is connected; the `tel:` hand-off dials from the phone selected in the chooser;
@@ -290,6 +334,10 @@ the sandbox. Each is checked at the next opportunity that provides what it needs
   key beep, which could happen if WirePlumber makes the phone's HFP link the default
   sink while a call is up. If it leaks, playback is pinned to a local sink
   (`pa_simple_new` takes a device name) instead of the default.
+- **Phone-side Bluetooth toggle during a call** (step 8): turning Bluetooth off on the
+  phone while a call is up closes the call window and the incoming-call notification.
+  The gateway removal and the re-syncs on reconnect were exercised without a call;
+  the call part is covered by the fake only.
 - **Flatpak sandbox** (steps 2 and 3): the `--own-name` hand-off between two sandboxed
   launches, the exported desktop file's `tel:` registration, and obexd writing the
   phonebook file into the sandboxed cache directory. Needs a machine with

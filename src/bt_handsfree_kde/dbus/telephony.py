@@ -15,14 +15,14 @@ from dbus_fast.aio import MessageBus
 from PySide6.QtCore import QObject, Signal
 
 from bt_handsfree_kde.dbus.helpers import (
-    DBUS_DAEMON_BUS_NAME,
-    DBUS_DAEMON_INTERFACE,
     OBJECT_MANAGER_INTERFACE,
     PROPERTIES_INTERFACE,
     DBusRequestError,
     add_signal_match,
     call_method,
+    is_name_owner_changed,
     name_has_owner,
+    name_owner_changed_match_rule,
     set_property,
     unwrap_variant,
 )
@@ -193,11 +193,7 @@ class TelephonyClient(QObject):
             self._bus,
             f"type='signal',sender='{TELEPHONY_BUS_NAME}',interface='{PROPERTIES_INTERFACE}'",
         )
-        await add_signal_match(
-            self._bus,
-            f"type='signal',sender='{DBUS_DAEMON_BUS_NAME}',interface='{DBUS_DAEMON_INTERFACE}',"
-            f"member='NameOwnerChanged',arg0='{TELEPHONY_BUS_NAME}'",
-        )
+        await add_signal_match(self._bus, name_owner_changed_match_rule(TELEPHONY_BUS_NAME))
 
         service_is_running = await name_has_owner(self._bus, TELEPHONY_BUS_NAME)
         if service_is_running:
@@ -310,7 +306,12 @@ class TelephonyClient(QObject):
             await self._call_on_object(gateway_path, TRANSPORT_INTERFACE, "Activate")
 
     async def _synchronise(self) -> None:
-        """Replace the known objects with the service's current object tree."""
+        """Replace the known objects with the service's current object tree.
+
+        Calls that were known before and are missing from the tree are announced as
+        removed, calls present in both as changed and new ones as added, so listeners
+        see the same sequence of signals a live update would have produced.
+        """
         try:
             reply_body = await call_method(
                 self._bus,
@@ -325,6 +326,7 @@ class TelephonyClient(QObject):
             return
 
         managed_objects = unwrap_variant(reply_body[0])
+        previous_call_paths = set(self._calls)
         self._gateways.clear()
         self._calls.clear()
 
@@ -341,10 +343,19 @@ class TelephonyClient(QObject):
         call_count = len(self._calls)
         logger.info("telephony service found: %d gateway(s), %d call(s)", gateway_count, call_count)
 
+        # Removals go out first so a listener never holds a call whose gateway is gone.
+        vanished_call_paths = previous_call_paths - set(self._calls)
+        for call_path in vanished_call_paths:
+            self.call_removed.emit(call_path)
+
         self._set_available(True)
         self.gateways_changed.emit()
-        for call in self._calls.values():
-            self.call_added.emit(call)
+        for call_path, call in self._calls.items():
+            was_known = call_path in previous_call_paths
+            if was_known:
+                self.call_changed.emit(call)
+            else:
+                self.call_added.emit(call)
 
     def _handle_message(self, message: Message) -> None:
         """Dispatch bus signals about the telephony service to the matching handler.
@@ -355,10 +366,7 @@ class TelephonyClient(QObject):
         if message.message_type != MessageType.SIGNAL:
             return None
 
-        is_name_owner_signal = (
-            message.interface == DBUS_DAEMON_INTERFACE and message.member == "NameOwnerChanged"
-        )
-        if is_name_owner_signal:
+        if is_name_owner_changed(message):
             self._on_name_owner_changed(message.body)
             return None
 
@@ -417,12 +425,25 @@ class TelephonyClient(QObject):
             self.call_added.emit(new_call)
 
     def _on_interfaces_removed(self, signal_body: list[Any]) -> None:
-        """Forget a gateway or call withdrawn by the object manager."""
+        """Forget a gateway or call withdrawn by the object manager.
+
+        A gateway that goes away takes its calls with it: the service withdraws them
+        first, but should it not, they are dropped here so no call outlives its phone.
+        """
         object_path = signal_body[0]
         removed_interfaces = signal_body[1]
 
         gateway_was_removed = AUDIO_GATEWAY_INTERFACE in removed_interfaces
         if gateway_was_removed and object_path in self._gateways:
+            orphaned_call_paths: list[str] = []
+            for call_path, call in self._calls.items():
+                if call.gateway_path == object_path:
+                    orphaned_call_paths.append(call_path)
+            for call_path in orphaned_call_paths:
+                del self._calls[call_path]
+                logger.info("call dropped with its gateway")
+                self.call_removed.emit(call_path)
+
             del self._gateways[object_path]
             logger.info("gateway removed")
             self.gateways_changed.emit()

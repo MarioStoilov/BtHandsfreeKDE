@@ -268,6 +268,7 @@ class FakeObexService:
         self._child_paths_by_session: dict[str, list[str]] = {}
         self._message_path_by_handle: dict[tuple[str, str], str] = {}
         self._map_session_paths: list[str] = []
+        self._is_client_exported = False
         # Data the fake phone serves.
         self.phonebook_vcard = ""
         self.messages_by_folder: dict[str, list[FakeMessage]] = {"inbox": [], "sent": []}
@@ -277,9 +278,27 @@ class FakeObexService:
         self.records = ObexRecords()
 
     async def start(self) -> None:
-        """Export the client object and claim `org.bluez.obex`."""
-        self._bus.export(OBEX_CLIENT_PATH, FakeObexClient(self))
+        """Export the client object (once) and claim `org.bluez.obex`.
+
+        After a `stop`, starting again re-claims the name with no sessions, like a
+        restarted obexd.
+        """
+        if not self._is_client_exported:
+            self._bus.export(OBEX_CLIENT_PATH, FakeObexClient(self))
+            self._is_client_exported = True
+
         await self._bus.request_name(OBEX_BUS_NAME)
+
+    async def stop(self) -> None:
+        """Leave the bus the way a crashing obexd does: the name goes, no object signals.
+
+        The name is released first, so the removal signals of the sessions withdrawn
+        afterwards no longer carry the obexd sender and never reach the client.
+        """
+        await self._bus.release_name(OBEX_BUS_NAME)
+
+        for session_path in list(self._child_paths_by_session):
+            self.drop_session(session_path)
 
     @property
     def open_map_session_paths(self) -> list[str]:

@@ -155,6 +155,28 @@ async def test_lost_session_and_forget(client_bus: MessageBus, obex: FakeObexSer
     assert messages.state_for_address(PHONE_ADDRESS).messages == ()
 
 
+async def test_obexd_restart_loses_the_session_and_refresh_reopens_it(
+    client_bus: MessageBus, obex: FakeObexService
+) -> None:
+    """obexd leaving the bus is reported as a lost connection; the next sync reconnects."""
+    messages = await _synced_client(client_bus, obex)
+
+    await obex.stop()
+    await wait_until(
+        lambda: messages.state_for_address(PHONE_ADDRESS).sync_state == SYNC_STATE_FAILED, "lost"
+    )
+    assert messages.state_for_address(PHONE_ADDRESS).error_text == CONNECTION_LOST_TEXT
+    assert len(messages.state_for_address(PHONE_ADDRESS).messages) == 3
+
+    await obex.start()
+    messages.start_sync(PHONE_ADDRESS)
+    await wait_until(
+        lambda: messages.state_for_address(PHONE_ADDRESS).sync_state == SYNC_STATE_SYNCED, "resync"
+    )
+    assert len(obex.records.created_sessions) == 2
+    assert len(obex.open_map_session_paths) == 1
+
+
 async def test_refused_connection_is_explained(
     client_bus: MessageBus, obex: FakeObexService
 ) -> None:

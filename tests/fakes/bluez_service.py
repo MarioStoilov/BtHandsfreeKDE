@@ -87,11 +87,23 @@ class FakeBlueZService:
         self._bus = bus
         self._devices_by_path: dict[str, FakeDevice] = {}
         self._batteries_by_path: dict[str, FakeBattery] = {}
+        self._is_root_exported = False
 
     async def start(self) -> None:
-        """Export the root object and claim `org.bluez`."""
-        self._bus.export(BLUEZ_ROOT_PATH, RootAnchorInterface())
+        """Export the root object (once) and claim `org.bluez`.
+
+        After a `stop`, starting again re-claims the name while the devices stay
+        exported, like a restarted BlueZ that loaded the same paired devices.
+        """
+        if not self._is_root_exported:
+            self._bus.export(BLUEZ_ROOT_PATH, RootAnchorInterface())
+            self._is_root_exported = True
+
         await self._bus.request_name(BLUEZ_BUS_NAME)
+
+    async def stop(self) -> None:
+        """Give the name up, as a stopping BlueZ would; the objects stay exported."""
+        await self._bus.release_name(BLUEZ_BUS_NAME)
 
     def add_device(
         self,

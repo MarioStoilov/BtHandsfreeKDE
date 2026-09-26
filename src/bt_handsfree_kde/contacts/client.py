@@ -58,6 +58,7 @@ PHONEBOOK_FORBIDDEN_TEXT = (
     "for this computer on the phone, then refresh."
 )
 TRANSFER_FAILED_TEXT = "The phone stopped sending its phonebook. Refresh to try again."
+CONNECTION_LOST_TEXT = "The contacts connection to the phone was lost. Refresh to try again."
 
 
 class ContactsError(Exception):
@@ -266,8 +267,16 @@ class ContactsClient(QObject):
         except ObexError as obex_error:
             raise _contacts_error(obex_error, PHONEBOOK_FORBIDDEN_TEXT) from obex_error
 
-        if final_status != TRANSFER_COMPLETE:
-            raise ContactsError(TRANSFER_FAILED_TEXT)
+        if final_status == TRANSFER_COMPLETE:
+            return
+
+        # A transfer ends in error either because the phone stopped sending or because
+        # the whole session is gone (obexd restarted, the link dropped).
+        session_is_gone = not self._obex.owns_session(session_path)
+        if session_is_gone:
+            raise ContactsError(CONNECTION_LOST_TEXT)
+
+        raise ContactsError(TRANSFER_FAILED_TEXT)
 
 
 def _contacts_error(obex_error: ObexError, refusal_text: str) -> ContactsError:
@@ -279,6 +288,9 @@ def _contacts_error(obex_error: ObexError, refusal_text: str) -> ContactsError:
     """
     if obex_error.is_service_missing:
         return ContactsError(OBEXD_MISSING_TEXT)
+
+    if obex_error.is_connection_lost:
+        return ContactsError(CONNECTION_LOST_TEXT)
 
     is_phone_refusal = obex_error.is_refused or obex_error.is_forbidden
     if is_phone_refusal:

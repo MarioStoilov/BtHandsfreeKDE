@@ -247,11 +247,18 @@ class FakeTelephonyService:
         return gateway_path
 
     def remove_gateway(self, gateway_path: str) -> None:
-        """Withdraw a gateway and every call on it."""
+        """Withdraw a gateway after every call on it, as PipeWire does on disconnect."""
         for call_path in list(self._calls_by_path):
             if call_path.startswith(gateway_path + "/"):
                 self.remove_call(call_path)
 
+        self.remove_gateway_only(gateway_path)
+
+    def remove_gateway_only(self, gateway_path: str) -> None:
+        """Withdraw a gateway object while its call objects stay exported.
+
+        Exercises the client's own clean-up of calls whose gateway vanished first.
+        """
         self._bus.unexport(gateway_path)
         del self._gateways_by_path[gateway_path]
 

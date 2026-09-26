@@ -60,6 +60,7 @@ def main() -> int:
     with event_loop:
         event_loop.create_task(application.start())
         event_loop.run_until_complete(quit_event.wait())
+        application.stop()
 
     return application.exit_code
 

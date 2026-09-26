@@ -1,5 +1,6 @@
 """Client for the phone's BlueZ device object: name, connection state and battery level."""
 
+import asyncio
 import logging
 from dataclasses import dataclass, replace
 from typing import Any
@@ -14,6 +15,9 @@ from bt_handsfree_kde.dbus.helpers import (
     DBusRequestError,
     add_signal_match,
     call_method,
+    is_name_owner_changed,
+    name_has_owner,
+    name_owner_changed_match_rule,
     unwrap_variant,
 )
 
@@ -86,8 +90,11 @@ class PhoneInfoClient(QObject):
     async def start(self) -> None:
         """Connect to the system bus, subscribe to BlueZ signals and load the device list.
 
-        Failure to reach the system bus or BlueZ is logged and leaves the client
-        unavailable; the application then shows phones without name and battery.
+        Failure to reach the system bus is logged and leaves the client unavailable for
+        good; the application then shows phones without name and battery. BlueZ itself
+        being absent is not final: the client loads the devices as soon as the name
+        appears, and drops them again when it leaves, so a restart of the Bluetooth
+        daemon needs nothing from the caller.
         """
         try:
             self._bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
@@ -97,6 +104,8 @@ class PhoneInfoClient(QObject):
             )
             return
 
+        # Signal subscriptions come first so nothing is missed between the initial
+        # snapshot and the moment the handlers are active.
         self._bus.add_message_handler(self._handle_message)
         try:
             await add_signal_match(
@@ -107,6 +116,26 @@ class PhoneInfoClient(QObject):
                 self._bus,
                 f"type='signal',sender='{BLUEZ_BUS_NAME}',interface='{PROPERTIES_INTERFACE}'",
             )
+            await add_signal_match(self._bus, name_owner_changed_match_rule(BLUEZ_BUS_NAME))
+            bluez_is_running = await name_has_owner(self._bus, BLUEZ_BUS_NAME)
+        except DBusRequestError as request_error:
+            logger.warning("system bus daemon refused a request: %s", request_error)
+            return
+
+        if bluez_is_running:
+            await self._synchronise()
+        else:
+            logger.warning("BlueZ is not on the system bus; phone details unavailable")
+
+    def stop(self) -> None:
+        """Close the system bus connection; nothing is delivered afterwards."""
+        if self._bus is not None:
+            self._bus.disconnect()
+            self._bus = None
+
+    async def _synchronise(self) -> None:
+        """Replace the known devices with BlueZ's current object tree and announce them."""
+        try:
             reply_body = await call_method(
                 self._bus,
                 BLUEZ_BUS_NAME,
@@ -119,6 +148,7 @@ class PhoneInfoClient(QObject):
             return
 
         managed_objects = unwrap_variant(reply_body[0])
+        self._devices_by_path.clear()
         for object_path, interfaces in managed_objects.items():
             if DEVICE_INTERFACE in interfaces:
                 self._devices_by_path[object_path] = _build_phone_info(object_path, interfaces)
@@ -127,9 +157,16 @@ class PhoneInfoClient(QObject):
         logger.info("BlueZ reachable: %d paired device(s)", device_count)
         self._is_available = True
 
+        for phone_info in list(self._devices_by_path.values()):
+            self.phone_info_changed.emit(phone_info)
+
     def _handle_message(self, message: Message) -> None:
         """Dispatch BlueZ signals to the matching handler; returns `None` to pass them on."""
         if message.message_type != MessageType.SIGNAL:
+            return None
+
+        if is_name_owner_changed(message):
+            self._on_name_owner_changed(message.body)
             return None
 
         is_bluez_path = message.path is not None and (
@@ -148,6 +185,26 @@ class PhoneInfoClient(QObject):
             self._on_properties_changed(message.path, message.body)
 
         return None
+
+    def _on_name_owner_changed(self, signal_body: list[Any]) -> None:
+        """Forget every device when BlueZ leaves the bus; reload them when it returns."""
+        changed_name = signal_body[0]
+        new_owner = signal_body[2]
+        if changed_name != BLUEZ_BUS_NAME:
+            return
+
+        service_left = new_owner == ""
+        if service_left:
+            logger.warning("BlueZ left the system bus; phone details unavailable")
+            self._is_available = False
+            forgotten_devices = list(self._devices_by_path.values())
+            self._devices_by_path.clear()
+            for device in forgotten_devices:
+                disconnected_device = replace(device, connected=False, battery_percentage=None)
+                self.phone_info_changed.emit(disconnected_device)
+        else:
+            logger.info("BlueZ appeared on the system bus")
+            asyncio.get_event_loop().create_task(self._synchronise())
 
     def _on_interfaces_added(self, signal_body: list[Any]) -> None:
         """Register a new device, or attach a battery interface to a known one."""

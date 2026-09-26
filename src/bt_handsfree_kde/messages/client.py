@@ -486,6 +486,9 @@ def _messages_error(obex_error: ObexError, refusal_text: str) -> MessagesError:
     if obex_error.is_service_missing:
         return MessagesError(OBEXD_MISSING_TEXT)
 
+    if obex_error.is_connection_lost:
+        return MessagesError(CONNECTION_LOST_TEXT)
+
     is_phone_refusal = obex_error.is_refused or obex_error.is_forbidden
     if is_phone_refusal:
         return MessagesError(refusal_text)

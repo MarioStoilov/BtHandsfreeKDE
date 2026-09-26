@@ -3,6 +3,7 @@
 from dbus_fast.aio import MessageBus
 
 from bt_handsfree_kde.contacts.client import (
+    CONNECTION_LOST_TEXT,
     CONNECTION_REFUSED_TEXT,
     OBEXD_MISSING_TEXT,
     PHONEBOOK_FORBIDDEN_TEXT,
@@ -80,6 +81,25 @@ async def test_missing_obexd_is_explained(client_bus: MessageBus) -> None:
     )
 
     assert contacts.state_for_address(PHONE_ADDRESS).error_text == OBEXD_MISSING_TEXT
+
+
+async def test_obexd_leaving_during_the_pull_is_a_lost_connection(
+    client_bus: MessageBus, obex: FakeObexService, monkeypatch, tmp_path
+) -> None:
+    """A pull whose session vanishes with obexd fails at once with the lost-connection text."""
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    obex.phonebook_vcard = VCARD_30_TEXT
+    contacts = await _started_contacts(client_bus)
+
+    contacts.start_sync(PHONE_ADDRESS)
+    await wait_until(lambda: len(obex.records.pull_filters) == 1, "pull requested")
+    await obex.stop()
+
+    await wait_until(
+        lambda: contacts.state_for_address(PHONE_ADDRESS).sync_state == SYNC_STATE_FAILED, "failure"
+    )
+    assert contacts.state_for_address(PHONE_ADDRESS).error_text == CONNECTION_LOST_TEXT
+    assert list(obex_transfer_directory().iterdir()) == []
 
 
 async def test_forget_drops_the_phonebook(client_bus: MessageBus, obex: FakeObexService) -> None:

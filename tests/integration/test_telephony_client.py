@@ -114,3 +114,18 @@ async def test_service_leaving_and_returning(
     await wait_until(lambda: events["availability"] == [True, False, True], "service back")
     assert [gateway.path for gateway in client.gateways] == [gateway_path]
     assert len(events["added"]) == 2
+
+
+async def test_gateway_withdrawn_first_drops_its_calls(
+    client_bus: MessageBus, telephony: FakeTelephonyService
+) -> None:
+    """A gateway removed while its call objects linger takes the calls with it."""
+    gateway_path = telephony.add_gateway(PHONE_ADDRESS)
+    client, events = await _started_client(client_bus)
+    call_path = telephony.add_call(gateway_path, CALL_STATE_ACTIVE, "+15550100")
+    await wait_until(lambda: len(events["added"]) == 1, "call added")
+
+    telephony.remove_gateway_only(gateway_path)
+
+    await wait_until(lambda: events["removed"] == [call_path], "call dropped")
+    assert client.gateways == [] and client.calls == []

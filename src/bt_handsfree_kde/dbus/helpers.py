@@ -172,6 +172,31 @@ async def add_signal_match(bus: MessageBus, match_rule: str) -> None:
     )
 
 
+def name_owner_changed_match_rule(bus_name: str) -> str:
+    """Return the match rule that selects the daemon's `NameOwnerChanged` for `bus_name`.
+
+    Every client that follows a service through restarts subscribes with this rule and
+    reads the old and new owner from the signal body (`sss`: name, old owner, new
+    owner; an empty owner means the name is not held).
+
+    Args:
+        bus_name: Well-known bus name whose ownership changes are wanted.
+    """
+    return (
+        f"type='signal',sender='{DBUS_DAEMON_BUS_NAME}',interface='{DBUS_DAEMON_INTERFACE}',"
+        f"member='NameOwnerChanged',arg0='{bus_name}'"
+    )
+
+
+def is_name_owner_changed(message: Message) -> bool:
+    """Tell whether `message` is the daemon's `NameOwnerChanged` signal."""
+    return (
+        message.message_type == MessageType.SIGNAL
+        and message.interface == DBUS_DAEMON_INTERFACE
+        and message.member == "NameOwnerChanged"
+    )
+
+
 async def name_has_owner(bus: MessageBus, bus_name: str) -> bool:
     """Tell whether a bus name currently has an owner on `bus`.
 

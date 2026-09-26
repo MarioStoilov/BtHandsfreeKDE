@@ -29,6 +29,8 @@ from bt_handsfree_kde.dbus.helpers import (
     DBusRequestError,
     add_signal_match,
     call_method,
+    is_name_owner_changed,
+    name_owner_changed_match_rule,
     set_property,
     unwrap_variant,
 )
@@ -58,8 +60,10 @@ FINAL_TRANSFER_STATUSES = frozenset({TRANSFER_COMPLETE, TRANSFER_ERROR})
 # How long to wait for the phone to finish one transfer, in seconds. A large phonebook
 # over a slow link takes tens of seconds; beyond this the transfer counts as failed.
 TRANSFER_TIMEOUT_S = 120
-# D-Bus error names that callers turn into specific explanations.
+# D-Bus error names that callers turn into specific explanations. `NoReply` is what the
+# bus daemon answers when obexd left the bus while a request to it was in flight.
 SERVICE_UNKNOWN_ERROR = "org.freedesktop.DBus.Error.ServiceUnknown"
+NO_REPLY_ERROR = "org.freedesktop.DBus.Error.NoReply"
 OBEX_FAILED_ERROR = "org.bluez.obex.Error.Failed"
 OBEX_FORBIDDEN_ERROR = "org.bluez.obex.Error.Forbidden"
 # Permission bits of the transfer directory: owner only, the files hold personal data.
@@ -89,6 +93,11 @@ class ObexError(Exception):
     def is_service_missing(self) -> bool:
         """Tell whether obexd is not installed (the bus could not activate it)."""
         return self.error_name == SERVICE_UNKNOWN_ERROR
+
+    @property
+    def is_connection_lost(self) -> bool:
+        """Tell whether obexd went away while the request was in flight."""
+        return self.error_name == NO_REPLY_ERROR
 
     @property
     def is_refused(self) -> bool:
@@ -133,10 +142,12 @@ class ObexClient(QObject):
         self._transfer_directory = obex_transfer_directory()
 
     async def start(self) -> None:
-        """Subscribe to obexd's object and property signals.
+        """Subscribe to obexd's object and property signals and follow its bus name.
 
         obexd is started on demand by the bus, so nothing is checked here; a missing
-        obexd surfaces as an `ObexError` on the first session.
+        obexd surfaces as an `ObexError` on the first session. Should obexd leave the
+        bus later, every session this client holds is treated as removed, since a
+        restarted obexd starts without sessions and never announces the old ones.
 
         Raises:
             DBusRequestError: the bus daemon refused the signal subscriptions.
@@ -150,6 +161,7 @@ class ObexClient(QObject):
             self._bus,
             f"type='signal',sender='{OBEX_BUS_NAME}',interface='{OBJECT_MANAGER_INTERFACE}'",
         )
+        await add_signal_match(self._bus, name_owner_changed_match_rule(OBEX_BUS_NAME))
 
     def owns_session(self, session_path: str) -> bool:
         """Tell whether `session_path` is a session this client created and still holds."""
@@ -252,6 +264,13 @@ class ObexClient(QObject):
         if latest_status in FINAL_TRANSFER_STATUSES:
             return latest_status
 
+        # The session may have gone (obexd left the bus, the phone dropped the link)
+        # between the request and this point; its transfer will never finish.
+        session_path = transfer_path.rsplit("/", 1)[0]
+        session_is_gone = not self.owns_session(session_path)
+        if session_is_gone:
+            return TRANSFER_ERROR
+
         event_loop = asyncio.get_event_loop()
         transfer_done: asyncio.Future[str] = event_loop.create_future()
         self._transfer_waiter_by_path[transfer_path] = transfer_done
@@ -283,6 +302,10 @@ class ObexClient(QObject):
         if message.message_type != MessageType.SIGNAL:
             return None
 
+        if is_name_owner_changed(message):
+            self._on_name_owner_changed(message.body)
+            return None
+
         # PropertiesChanged is emitted on the object itself; the object manager signals
         # are emitted on obexd's root object and name the object in their body.
         if message.interface == PROPERTIES_INTERFACE and message.member == "PropertiesChanged":
@@ -310,6 +333,34 @@ class ObexClient(QObject):
             self._on_interfaces_removed(message.body)
 
         return None
+
+    def _on_name_owner_changed(self, signal_body: list[Any]) -> None:
+        """Drop every held session when obexd leaves the bus."""
+        changed_name = signal_body[0]
+        new_owner = signal_body[2]
+        if changed_name != OBEX_BUS_NAME:
+            return
+
+        service_left = new_owner == ""
+        if not service_left:
+            logger.info("obexd appeared on the bus")
+            return
+
+        logger.warning("obexd left the bus; dropping %d session(s)", len(self._session_paths))
+        self._transfer_status_by_path.clear()
+        for session_path in sorted(self._session_paths):
+            self._drop_session(session_path)
+
+    def _drop_session(self, session_path: str) -> None:
+        """Forget `session_path`, fail its pending transfers and announce its removal."""
+        self._session_paths.discard(session_path)
+
+        session_prefix = session_path + "/"
+        for transfer_path in list(self._transfer_waiter_by_path):
+            if transfer_path.startswith(session_prefix):
+                self._resolve_transfer(transfer_path, TRANSFER_ERROR)
+
+        self.object_removed.emit(session_path, [SESSION_INTERFACE])
 
     def _is_below_own_session(self, object_path: str) -> bool:
         """Tell whether `object_path` is a child of a session this client holds."""
@@ -366,12 +417,7 @@ class ObexClient(QObject):
         logger.debug("obexd removed %s with %s", object_path, removed_interfaces)
         session_removed = SESSION_INTERFACE in removed_interfaces
         if session_removed and object_path in self._session_paths:
-            self._session_paths.discard(object_path)
-            session_prefix = object_path + "/"
-            for transfer_path in list(self._transfer_waiter_by_path):
-                if transfer_path.startswith(session_prefix):
-                    self._resolve_transfer(transfer_path, TRANSFER_ERROR)
-            self.object_removed.emit(object_path, removed_interfaces)
+            self._drop_session(object_path)
             return
 
         if self._is_below_own_session(object_path):
