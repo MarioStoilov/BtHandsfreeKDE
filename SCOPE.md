@@ -201,6 +201,41 @@ The app never has to be restarted; whatever comes back is picked up from the bus
   BlueZ restarts and a phone reconnect were run (outcomes above); the phone-side
   Bluetooth toggle during a call is listed under Pending verifications.
 
+### 7. Startup requirements check
+
+Defined 2026-09-26. On launch, before the tray registers, the app checks what it
+depends on and keeps running with whatever works:
+
+- The items, in the order shown: PipeWire's telephony service (`org.pipewire.Telephony`
+  owned or activatable on the session bus; its presence implies PipeWire 1.4 or newer,
+  which introduced the service, so no version is read), BlueZ (`org.bluez` owned on the
+  system bus), obexd (`org.bluez.obex` owned or activatable), a notification server
+  whose `GetCapabilities` includes `actions` (a server without buttons counts as
+  missing, since ringing calls then fall back to the window), a StatusNotifierWatcher
+  (owned), and libpulse's simple API loading (key tones).
+- What the user sees when something is missing: a window (`ui/dependencies_window.py`)
+  with one row per item, an icon for met or missing, the item's name, one sentence on
+  what was found and, for a missing item, what provides it in the README's words
+  (package names `pipewire`, `wireplumber`, `libspa-0.2-bluetooth`, `bluez`,
+  `bluez-obexd`, `libpulse0` / `pulseaudio-libs`, or the desktop component); a
+  normal-urgency notification "Missing requirements" listing the item names; a
+  "Missing: …" line at the end of the tray tooltip; and a "Missing requirements…"
+  entry above Quit in the tray menu that reopens the window (decision 2026-09-26, so
+  the window can be found again after it was closed).
+- The checks are repeated half a second after any of the watched names changes hands
+  on its bus, so a service restart is checked once in its final state. An item that
+  becomes available only updates the window, the tooltip and the menu; an item that
+  goes missing while the app runs is announced like at startup.
+- Backend: `dbus/dependencies.py`, using `NameHasOwner`, `ListActivatableNames` and
+  `GetCapabilities`, with its own system bus connection for BlueZ. Inside the sandbox
+  the D-Bus proxy answers these for the names the manifest allows, which are exactly
+  the ones checked.
+- Observed on the host (2026-09-26): a normal launch logs every requirement as
+  available and shows no window; an obexd restart triggers exactly one re-check half a
+  second later; a launch with the system bus unreachable reports BlueZ missing, opens
+  the window, sends the notification and ends the tooltip with "Missing: Bluetooth
+  daemon (BlueZ)" while calls, contacts and messages keep working.
+
 ## Tray icon and menu
 
 - The icon reflects call state (idle, incoming, active). The tooltip shows the phone's
@@ -317,6 +352,7 @@ is reported done.
     notification plus a window listing each missing item with the distro package or
     setting that provides it (the same names as in the README), and in the tray
     tooltip while it lasts. Checks are repeated when a name appears or leaves the bus.
+    Defined under "Startup requirements check" in Features (2026-09-26).
 11. Flathub submission: git-pinned manifest, screenshot, first release.
 
 Later, unscheduled: sending messages, reception once PipeWire exposes it.

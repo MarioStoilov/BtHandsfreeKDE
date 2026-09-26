@@ -142,7 +142,8 @@ through `dbus/obex.py`.
 - `__main__.py`: argument parsing (`tel:` URIs), `QApplication`, qasync event loop, runs
   `HandsfreeApplication` and returns its exit code.
 - `app.py`: `HandsfreeApplication`, the only place that wires clients to UI; claims the
-  single instance or hands the launch over and quits; owns the call-duration timer,
+  single instance or hands the launch over and quits; runs the requirements check
+  before anything is shown; owns the call-duration timer,
   decides between call notifications and the fallback window, fills caller names in
   from the phonebooks before a call reaches any view, groups messages into
   conversations, and turns pushed messages into notifications.
@@ -150,6 +151,9 @@ through `dbus/obex.py`.
   `name_has_owner`, `name_owner_changed_match_rule` / `is_name_owner_changed` (every
   client follows its service's bus name through restarts), `unwrap_variant`,
   `DBusRequestError` (carries the D-Bus error name).
+- `dbus/dependencies.py`: `DependencyChecker` (the six startup checks over both buses,
+  re-run on `NameOwnerChanged`), `DependencyReport`, `DependencyStatus`, the item keys,
+  titles, details and remedies.
 - `dbus/telephony.py`: `TelephonyClient` (**reference implementation** for the coding
   standards), `AudioGateway`, `Call`, call-state constants, `TelephonyError`.
 - `dbus/bluez.py`: `PhoneInfoClient`, `PhoneInfo` (alias, connected, battery).
@@ -190,8 +194,10 @@ through `dbus/obex.py`.
 - `ui/settings_window.py`: `SettingsWindow`, per-phone volume sliders, audio routing, codec.
 - `ui/about_window.py`: `AboutWindow`; icon, name, version, description, links,
   disclosure, Close.
-- `dtmf.py`: DTMF tone synthesis and `DtmfTonePlayer` (libpulse-simple via ctypes, one
-  short thread per key press).
+- `ui/dependencies_window.py`: `DependenciesWindow`; one row per checked item with its
+  detail and, when missing, its remedy; Close.
+- `dtmf.py`: DTMF tone synthesis, `DtmfTonePlayer` (libpulse-simple via ctypes, one
+  short thread per key press) and `libpulse_simple_is_available` for the startup check.
 - `ui/tray.py`: `HandsfreeTray`; builds the `MenuItem` tree and icon/tooltip/status from
   state and pushes them to the two protocol servers.
 - `icons.py`: bundled icon path, `application_icon()` for windows, and

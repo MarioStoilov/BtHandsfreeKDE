@@ -17,6 +17,7 @@ from bt_handsfree_kde.contacts.client import (
 )
 from bt_handsfree_kde.contacts.client import ContactsClient, PhonebookState
 from bt_handsfree_kde.dbus.bluez import PhoneInfo, PhoneInfoClient
+from bt_handsfree_kde.dbus.dependencies import DependencyChecker, DependencyReport
 from bt_handsfree_kde.dbus.helpers import DBusRequestError
 from bt_handsfree_kde.dbus.instance import SingleInstance
 from bt_handsfree_kde.dbus.notifications import (
@@ -46,6 +47,7 @@ from bt_handsfree_kde.messages.message import TextMessage
 from bt_handsfree_kde.phone_numbers import number_from_tel_uri
 from bt_handsfree_kde.ui.about_window import AboutWindow
 from bt_handsfree_kde.ui.call_window import CallWindow
+from bt_handsfree_kde.ui.dependencies_window import DependenciesWindow
 from bt_handsfree_kde.ui.main_window import MainWindow
 from bt_handsfree_kde.ui.settings_window import SettingsWindow
 from bt_handsfree_kde.ui.tray import HandsfreeTray
@@ -69,6 +71,8 @@ HANDOFF_FAILED_EXIT_CODE = 1
 MESSAGE_NOTIFICATION_PREVIEW_LIMIT = 200
 # Marks a cut preview.
 ELLIPSIS = "…"
+# Title of the notification shown when a requirement is missing.
+MISSING_REQUIREMENTS_SUMMARY = "Missing requirements"
 
 
 class HandsfreeApplication(QObject):
@@ -93,6 +97,7 @@ class HandsfreeApplication(QObject):
         self.exit_code = 0
         self._session_bus: MessageBus | None = None
         self._instance: SingleInstance | None = None
+        self._dependencies: DependencyChecker | None = None
         self._telephony: TelephonyClient | None = None
         self._obex: ObexClient | None = None
         self._contacts: ContactsClient | None = None
@@ -110,11 +115,15 @@ class HandsfreeApplication(QObject):
         # Where a new-message notification's Open button leads: (phone address,
         # conversation key) keyed by the message path the notification was shown for.
         self._message_notification_targets: dict[str, tuple[str, str]] = {}
+        # Keys of the requirements the last report found missing, to notify only about
+        # items that newly went missing.
+        self._missing_requirement_keys: set[str] = set()
 
         self._call_window = CallWindow()
         self._settings_window = SettingsWindow()
         self._main_window = MainWindow()
         self._about_window = AboutWindow()
+        self._dependencies_window = DependenciesWindow()
         self._status_timer = QTimer(self)
         self._status_timer.setInterval(CALL_STATUS_REFRESH_INTERVAL_MS)
 
@@ -150,6 +159,16 @@ class HandsfreeApplication(QObject):
             await self._hand_off_and_quit()
             return
 
+        # The requirements are checked before anything is shown, so the window that
+        # lists a missing item is the first thing the user sees; the notification about
+        # it follows once the notifier is up.
+        self._dependencies = DependencyChecker(self._session_bus, self)
+        self._dependencies.report_changed.connect(self._on_dependencies_changed)
+        dependency_report = await self._dependencies.start()
+        self._apply_dependency_report(dependency_report)
+        if not dependency_report.all_met:
+            self._dependencies_window.show_and_raise()
+
         self._telephony = TelephonyClient(self._session_bus, self)
         self._telephony.availability_changed.connect(self._on_availability_changed)
         self._telephony.gateways_changed.connect(self._on_gateways_changed)
@@ -179,12 +198,15 @@ class HandsfreeApplication(QObject):
         self._tray.contacts_requested.connect(self._show_contacts)
         self._tray.messages_requested.connect(self._show_messages)
         self._tray.about_requested.connect(self._about_window.show_and_raise)
+        self._tray.requirements_requested.connect(self._dependencies_window.show_and_raise)
         self._tray.call_focus_requested.connect(self._focus_call)
 
         # The notifier, BlueZ, the tray and the obexd client come up before telephony so
         # the very first call and gateway events can already be presented with names and
         # battery, and the first gateway can start its phonebook and message syncs.
         await self._notifier.start()
+        if not dependency_report.all_met:
+            self._notify_missing_requirements(dependency_report)
         await self._phones.start()
         await self._tray.start()
         await self._obex.start()
@@ -205,6 +227,8 @@ class HandsfreeApplication(QObject):
         the session connection closing; nothing is sent first.
         """
         self._phones.stop()
+        if self._dependencies is not None:
+            self._dependencies.stop()
         if self._session_bus is not None:
             self._session_bus.disconnect()
             self._session_bus = None
@@ -236,6 +260,40 @@ class HandsfreeApplication(QObject):
             logger.warning("ignoring a command-line argument that is not a tel: URI")
 
         return ""
+
+    def _apply_dependency_report(self, report: DependencyReport) -> None:
+        """Remember which requirements are missing and show the report in the window."""
+        missing_keys: set[str] = set()
+        for status in report.missing:
+            missing_keys.add(status.key)
+
+        self._missing_requirement_keys = missing_keys
+        self._dependencies_window.update_report(report)
+
+    def _notify_missing_requirements(self, report: DependencyReport) -> None:
+        """Tell the user which requirements are missing and that the app carries on."""
+        body = (
+            f"Not available: {report.missing_titles_text}. The app keeps running with what "
+            "works; the requirements window says what provides each item."
+        )
+        self._run(
+            self._notifier.show_information(MISSING_REQUIREMENTS_SUMMARY, body, URGENCY_NORMAL)
+        )
+
+    def _on_dependencies_changed(self, report: DependencyReport) -> None:
+        """Refresh the window and the tray after a re-check; alert when something new is missing.
+
+        An item that becomes available only updates the window and the tooltip; an item
+        that goes missing while the app runs is announced like at startup.
+        """
+        previously_missing_keys = set(self._missing_requirement_keys)
+        self._apply_dependency_report(report)
+        self._refresh_tray()
+
+        newly_missing_keys = self._missing_requirement_keys - previously_missing_keys
+        if newly_missing_keys:
+            self._notify_missing_requirements(report)
+            self._dependencies_window.show_and_raise()
 
     def _on_availability_changed(self, is_available: bool) -> None:
         """Redraw and tell the user when the telephony service goes away."""
@@ -551,6 +609,7 @@ class HandsfreeApplication(QObject):
                 unread_message_count += conversation.unread_count
 
         phone_info_by_address = self._phone_info_by_address()
+        missing_requirements_text = self._dependencies.report.missing_titles_text
         self._tray.update_state(
             self._telephony.is_available,
             self._telephony.gateways,
@@ -558,6 +617,7 @@ class HandsfreeApplication(QObject):
             phone_info_by_address,
             progress_text_by_call_path,
             unread_message_count,
+            missing_requirements_text,
         )
 
     def _conversations_for(self, address: str) -> list[Conversation]:

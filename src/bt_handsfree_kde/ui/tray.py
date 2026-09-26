@@ -4,7 +4,7 @@ import asyncio
 import logging
 from functools import partial
 
-from dbus_fast import Message, MessageType
+from dbus_fast import Message
 from dbus_fast.aio import MessageBus
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QIcon
@@ -13,10 +13,10 @@ from bt_handsfree_kde import APPLICATION_ID, APPLICATION_NAME
 from bt_handsfree_kde.dbus.bluez import PhoneInfo
 from bt_handsfree_kde.dbus.dbusmenu import MENU_OBJECT_PATH, DBusMenuService, MenuItem
 from bt_handsfree_kde.dbus.helpers import (
-    DBUS_DAEMON_BUS_NAME,
-    DBUS_DAEMON_INTERFACE,
     add_signal_match,
+    is_name_owner_changed,
     name_has_owner,
+    name_owner_changed_match_rule,
 )
 from bt_handsfree_kde.dbus.statusnotifier import (
     STATUS_ACTIVE,
@@ -50,6 +50,7 @@ DIALPAD_ICON = "input-dialpad"
 CONTACTS_ICON = "view-pim-contacts"
 MESSAGES_ICON = "mail-message"
 ABOUT_ICON = "help-about"
+REQUIREMENTS_ICON = "dialog-warning"
 SPEAKER_ICON = "audio-volume-high"
 MICROPHONE_ICON = "audio-input-microphone"
 QUIT_ICON = "application-exit"
@@ -80,6 +81,8 @@ class HandsfreeTray(QObject):
     messages_requested = Signal()
     # The About entry opens the About window.
     about_requested = Signal()
+    # The entry shown while a requirement is missing opens the requirements window.
+    requirements_requested = Signal()
     quit_requested = Signal()
 
     def __init__(
@@ -101,6 +104,7 @@ class HandsfreeTray(QObject):
         self._phone_info_by_address: dict[str, PhoneInfo] = {}
         self._progress_text_by_call_path: dict[str, str] = {}
         self._unread_message_count = 0
+        self._missing_requirements_text = ""
 
         self._menu_service = DBusMenuService()
         self._item_service = StatusNotifierItemService(
@@ -118,11 +122,7 @@ class HandsfreeTray(QObject):
         self._apply_state()
 
         self._bus.add_message_handler(self._handle_message)
-        await add_signal_match(
-            self._bus,
-            f"type='signal',sender='{DBUS_DAEMON_BUS_NAME}',interface='{DBUS_DAEMON_INTERFACE}',"
-            f"member='NameOwnerChanged',arg0='{WATCHER_BUS_NAME}'",
-        )
+        await add_signal_match(self._bus, name_owner_changed_match_rule(WATCHER_BUS_NAME))
 
         watcher_is_running = await name_has_owner(self._bus, WATCHER_BUS_NAME)
         if watcher_is_running:
@@ -140,6 +140,7 @@ class HandsfreeTray(QObject):
         phone_info_by_address: dict[str, PhoneInfo],
         progress_text_by_call_path: dict[str, str],
         unread_message_count: int,
+        missing_requirements_text: str,
     ) -> None:
         """Replace the displayed state and redraw icon, tooltip and menu.
 
@@ -150,6 +151,8 @@ class HandsfreeTray(QObject):
             phone_info_by_address: BlueZ details keyed by upper-case Bluetooth address.
             progress_text_by_call_path: Per call, its elapsed duration or dialing state.
             unread_message_count: Unread incoming messages across all phones.
+            missing_requirements_text: Titles of the missing requirements, joined; empty
+                when everything is available. Shown in the tooltip and as a menu entry.
         """
         self._is_service_available = is_service_available
         self._gateways = list(gateways)
@@ -157,17 +160,13 @@ class HandsfreeTray(QObject):
         self._phone_info_by_address = dict(phone_info_by_address)
         self._progress_text_by_call_path = dict(progress_text_by_call_path)
         self._unread_message_count = unread_message_count
+        self._missing_requirements_text = missing_requirements_text
 
         self._apply_state()
 
     def _handle_message(self, message: Message) -> None:
         """Re-register when the watcher restarts; returns `None` so other handlers run too."""
-        is_owner_change = (
-            message.message_type == MessageType.SIGNAL
-            and message.interface == DBUS_DAEMON_INTERFACE
-            and message.member == "NameOwnerChanged"
-        )
-        if not is_owner_change:
+        if not is_name_owner_changed(message):
             return None
 
         changed_name = message.body[0]
@@ -212,12 +211,23 @@ class HandsfreeTray(QObject):
     def _build_menu(self) -> list[MenuItem]:
         """Create the menu tree for the stored state."""
         quit_item = MenuItem("Quit", QUIT_ICON, on_activated=self.quit_requested.emit)
+        closing_items: list[MenuItem] = []
+        if self._missing_requirements_text:
+            closing_items.append(
+                MenuItem(
+                    "Missing requirements…",
+                    REQUIREMENTS_ICON,
+                    key="requirements",
+                    on_activated=self.requirements_requested.emit,
+                )
+            )
+        closing_items.append(quit_item)
 
         if not self._is_service_available:
             return [
                 MenuItem(SERVICE_UNAVAILABLE_TEXT, enabled=False),
                 MenuItem.separator(),
-                quit_item,
+                *closing_items,
             ]
 
         menu_items: list[MenuItem] = []
@@ -262,7 +272,7 @@ class HandsfreeTray(QObject):
         menu_items.append(about_item)
         menu_items.append(MenuItem.separator())
 
-        menu_items.append(quit_item)
+        menu_items.extend(closing_items)
 
         return menu_items
 
@@ -400,6 +410,8 @@ class HandsfreeTray(QObject):
             tooltip_lines.append(header_text)
         for call in self._calls:
             tooltip_lines.append(f"{call.state}: {call.caller_label}")
+        if self._missing_requirements_text:
+            tooltip_lines.append(f"Missing: {self._missing_requirements_text}")
 
         return "\n".join(tooltip_lines)
 

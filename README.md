@@ -36,9 +36,16 @@ shortcomings are in [`SCOPE.md`](SCOPE.md).
   `org.pipewire.Telephony`; it never touches audio itself.
 - BlueZ, with obexd (`bluez-obexd`) for contacts and messages. Without obexd, calls
   work and those two tabs say what is missing.
-- A desktop with a StatusNotifierItem tray and a freedesktop notification server.
-  Developed and tested on KDE Plasma 6.
+- A desktop with a StatusNotifierItem tray and a freedesktop notification server that
+  supports actions. Developed and tested on KDE Plasma 6.
+- The libpulse library (`libpulse0` on Debian and Ubuntu, `pulseaudio-libs` on Fedora)
+  for the dialpad key tones; without it the keys are silent.
 - Your phone paired and connected with the hands-free profile.
+
+On launch the app checks these and, when something is missing, opens a window that
+names what provides each item, shows a notification and adds a line to the tray
+tooltip. It keeps running with the features that work, and the list updates by itself
+when a service appears or leaves.
 
 Known shortcoming: no cellular reception indicator. PipeWire receives the value from the
 phone but does not publish it on D-Bus, so the tray shows battery only. See `SCOPE.md`.
@@ -61,14 +68,14 @@ Debian / Ubuntu:
 
 ```bash
 sudo apt install pipewire wireplumber libspa-0.2-bluetooth bluez bluez-obexd \
-                 libxcb-cursor0 libegl1 libxkbcommon-x11-0
+                 libpulse0 libxcb-cursor0 libegl1 libxkbcommon-x11-0
 ```
 
 Fedora:
 
 ```bash
 sudo dnf install pipewire pipewire-libs wireplumber bluez bluez-obexd \
-                 xcb-util-cursor libxkbcommon-x11
+                 pulseaudio-libs xcb-util-cursor libxkbcommon-x11
 ```
 
 Arch:

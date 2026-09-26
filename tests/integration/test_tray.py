@@ -44,7 +44,7 @@ async def test_tray_registers_and_serves_the_menu(
     await tray.start()
     assert watcher.registered_services == [client_bus.unique_name]
 
-    tray.update_state(True, [GATEWAY], [], {}, {}, 3)
+    tray.update_state(True, [GATEWAY], [], {}, {}, 3, "")
     viewer = await connect_bus()
     labels = await _menu_labels(viewer, client_bus.unique_name)
     assert labels[0] == PHONE_ADDRESS
@@ -82,6 +82,27 @@ async def test_tray_registers_and_serves_the_menu(
         )
     )
     await wait_until(lambda: quits == [True], "quit click")
+
+
+async def test_missing_requirements_show_in_tooltip_and_menu(
+    qt_application, client_bus: MessageBus, connect_bus, watcher: FakeWatcherService
+) -> None:
+    """While something is missing the tooltip names it and a menu entry opens the window."""
+    tray = HandsfreeTray(client_bus, application_icon())
+    requests: list[bool] = []
+    tray.requirements_requested.connect(lambda: requests.append(True))
+    await tray.start()
+
+    tray.update_state(True, [GATEWAY], [], {}, {}, 0, "Bluetooth transfer service (obexd)")
+    viewer = await connect_bus()
+    labels = await _menu_labels(viewer, client_bus.unique_name)
+    assert "Missing requirements…" in labels
+    assert tray._tooltip_text().endswith("Missing: Bluetooth transfer service (obexd)")
+
+    tray.update_state(True, [GATEWAY], [], {}, {}, 0, "")
+    labels = await _menu_labels(viewer, client_bus.unique_name)
+    assert "Missing requirements…" not in labels
+    assert "Missing:" not in tray._tooltip_text()
 
 
 async def test_tray_re_registers_when_the_watcher_returns(

@@ -12,8 +12,9 @@ import pytest_asyncio
 from PySide6.QtWidgets import QApplication
 
 import bt_handsfree_kde.app as app_module
-from bt_handsfree_kde.app import HandsfreeApplication
+from bt_handsfree_kde.app import MISSING_REQUIREMENTS_SUMMARY, HandsfreeApplication
 from bt_handsfree_kde.contacts.client import SYNC_STATE_SYNCED as CONTACTS_SYNCED
+from bt_handsfree_kde.dbus.dependencies import OBEXD_KEY, OBEXD_TITLE, TRAY_KEY
 from bt_handsfree_kde.dbus.telephony import CALL_STATE_INCOMING
 from bt_handsfree_kde.messages.client import CONNECTION_LOST_TEXT
 from bt_handsfree_kde.messages.client import SYNC_STATE_FAILED as MESSAGES_FAILED
@@ -108,6 +109,56 @@ def _summaries(notifications: FakeNotificationService) -> list[str]:
         summaries.append(shown.summary)
 
     return summaries
+
+
+async def test_requirements_are_met_with_every_fake(
+    application: HandsfreeApplication, notifications: FakeNotificationService
+) -> None:
+    """With every service present nothing is reported missing and the window stays hidden."""
+    bus_statuses = [
+        status for status in application._dependencies.report.statuses if status.key != "key-tones"
+    ]
+
+    assert all(status.is_met for status in bus_statuses)
+    assert not application._dependencies_window.isVisible()
+    assert MISSING_REQUIREMENTS_SUMMARY not in _summaries(notifications)
+
+
+async def test_missing_requirements_are_shown_and_cleared_when_they_appear(
+    qt_application: QApplication,
+    private_buses: str,
+    telephony: FakeTelephonyService,
+    bluez: FakeBlueZService,
+    notifications: FakeNotificationService,
+    connect_bus,
+) -> None:
+    """Without obexd and a tray the window, a notification and the tooltip say so."""
+    started_application = HandsfreeApplication(qt_application, [])
+
+    await started_application.start()
+
+    report = started_application._dependencies.report
+    missing_keys = [status.key for status in report.missing if status.key != "key-tones"]
+    assert missing_keys == [OBEXD_KEY, TRAY_KEY]
+    assert started_application._dependencies_window.isVisible()
+    await wait_until(
+        lambda: MISSING_REQUIREMENTS_SUMMARY in _summaries(notifications), "notification"
+    )
+    assert OBEXD_TITLE in started_application._tray._missing_requirements_text
+
+    late_obex = FakeObexService(await connect_bus())
+    await late_obex.start()
+    await wait_until(
+        lambda: (
+            OBEXD_KEY
+            not in [status.key for status in started_application._dependencies.report.missing]
+        ),
+        "obexd picked up",
+    )
+    assert OBEXD_TITLE not in started_application._tray._missing_requirements_text
+    assert _summaries(notifications).count(MISSING_REQUIREMENTS_SUMMARY) == 1
+
+    started_application.stop()
 
 
 async def test_phone_disconnect_and_reconnect(

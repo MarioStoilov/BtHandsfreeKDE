@@ -63,6 +63,20 @@ LIBPULSE_SIMPLE_NAME = "libpulse-simple.so.0"
 STREAM_NAME = "DTMF key tone"
 
 
+def libpulse_simple_is_available() -> bool:
+    """Tell whether libpulse's simple API can be loaded, so key tones can be played.
+
+    Loading is cheap and cached by the dynamic linker; the player loads the library
+    again for itself on the first tone.
+    """
+    try:
+        ctypes.CDLL(LIBPULSE_SIMPLE_NAME)
+    except OSError:
+        return False
+
+    return True
+
+
 class _PaSampleSpec(ctypes.Structure):
     """Mirror of libpulse's `pa_sample_spec`."""
 
