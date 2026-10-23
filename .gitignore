@@ -9,6 +9,7 @@ dist/
 build-dir/
 .flatpak-builder/
 repo/
+*.flatpak
 # ide
 .idea/
 .vscode/

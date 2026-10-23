@@ -354,31 +354,38 @@ is reported done.
     setting that provides it (the same names as in the README), and in the tray
     tooltip while it lasts. Checks are repeated when a name appears or leaves the bus.
     Defined under "Startup requirements check" in Features (2026-09-26).
-11. **Flathub submission.** The store listing needs a screenshot and lowercase
-    AppStream identifiers; the submission needs a manifest that builds from a fixed
-    commit. The screenshot is `data/screenshots/dialpad.png`, the Dialpad tab with
-    the fictional example number and the phone connected, captured on the host with
-    Spectacle; no tab that shows personal data is ever captured. The MetaInfo file
-    references it by its raw GitHub URL at the release tag, carries the icon's blue
-    as branding colours and dates the release to the day the tag is made. Categories
-    are Network and Telephony (one main category, so the app appears once in the
-    menu). The release is the git tag `v0.1.0` on the commit that carries these
-    changes. The Flathub copy of the manifest is this repository's manifest with the
-    app module's `dir` source replaced by a `git` source pinned to that tag and its
-    commit, submitted together with the two requirements files as a pull request to
-    `flathub/flathub` from a `new-pr` branch. The KDE SDK ships libdbus but no
-    `dbus-daemon`, so the manifest builds dbus as a build-time-only module (cleaned
-    up afterwards) for the integration tests; the install step compiles the package
-    afresh and the test run writes no bytecode, so nothing from the test run stays in
-    the installed app. Owning the app's own bus name needs no `--own-name` entry
-    (granted by default; the linter rejects one). Verified on the host with
-    flatpak-builder 1.4.8 on 2026-10-23: the sandbox build runs all 101 tests, the
-    sandboxed app registers its tray item, syncs the phonebook through obexd into its
-    own cache directory (the transfer file is gone after parsing), a second sandboxed
-    launch hands its `tel:` number over and exits, and the exported desktop file
-    registers the `tel:` scheme. Done when the pull request's build on Flathub's
-    infrastructure (x86_64 and aarch64, test suite included) is green and the app is
-    published.
+11. **Release bundles.** Each release is a git tag `v<version>` on a commit whose
+    MetaInfo release entry and `__version__` carry that version. Pushing the tag runs
+    `.github/workflows/release.yml`: inside the Flathub-maintained KDE 6.10 container
+    image it builds the tagged checkout with the repository's own manifest (test suite
+    included), exports a single-file bundle for x86_64 with Flathub as the runtime
+    repository, and attaches it to the GitHub release of the tag. The build passes
+    `--default-branch=stable` (the manifest cannot carry the branch; Flathub's linter
+    rejects the key), so a newer bundle upgrades an existing installation. Users
+    install the bundle with `flatpak install`; there is no automatic update.
+    Decided 2026-10-23 after the Flathub route was tried and dropped: Flathub's
+    generative-AI policy forbids AI-assisted manifests and AI-run submission pull
+    requests, which this project cannot honestly satisfy, and its rules on tray-only
+    and short-lived projects made acceptance unlikely. The Snap Store was ruled out
+    because strict confinement cannot reach `org.pipewire.Telephony` or obexd on the
+    session bus and classic confinement is not granted for session-bus access.
+    The store-facing assets stay: the screenshot `data/screenshots/dialpad.png` (the
+    Dialpad tab with the fictional example number; no tab that shows personal data
+    is ever captured), referenced from the MetaInfo by its raw GitHub URL at the
+    release tag, branding colours, lowercase AppStream developer id, and the Network
+    and Telephony categories. Manifest facts that still apply: the KDE SDK ships
+    libdbus but no `dbus-daemon`, so the manifest builds dbus as a build-time-only
+    module (cleaned up afterwards) for the integration tests; the install step
+    compiles the package afresh and the test run writes no bytecode, so nothing from
+    the test run stays in the installed app; owning the app's own bus name needs no
+    `--own-name` entry. Verified on the host with flatpak-builder 1.4.8 on
+    2026-10-23: the sandbox build runs all 101 tests, the sandboxed app registers
+    its tray item, syncs the phonebook through obexd into its own cache directory
+    (the transfer file is gone after parsing), a second sandboxed launch hands its
+    `tel:` number over and exits, the exported desktop file registers the `tel:`
+    scheme, and a locally exported bundle installs and runs. Done when the workflow
+    has produced the bundle for a pushed tag and that bundle installs and runs from
+    the release page.
 
 Later, unscheduled: sending messages, reception once PipeWire exposes it.
 

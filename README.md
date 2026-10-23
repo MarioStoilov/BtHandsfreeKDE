@@ -52,9 +52,18 @@ phone but does not publish it on D-Bus, so the tray shows battery only. See `SCO
 
 ## Install
 
-Flatpak on Flathub is the intended distribution channel; the first submission is
-tracked as build step 11 in `SCOPE.md`. Until then, run from source or build the Flatpak
-locally.
+Each release on the [releases page](https://github.com/MarioStoilov/BtHandsfreeKDE/releases)
+carries a single-file Flatpak bundle for x86_64. Install it with Flatpak (the KDE runtime
+it needs is fetched from Flathub, which the bundle adds as a remote if it is missing):
+
+```bash
+flatpak install --user ./bt-handsfree-kde-0.1.0-x86_64.flatpak
+flatpak run io.github.MarioStoilov.BtHandsfreeKDE
+```
+
+A newer release is installed the same way and replaces the previous one; bundles do not
+update by themselves. The app is not on Flathub (see build step 11 in `SCOPE.md`).
+Alternatively, run from source or build the Flatpak locally as described below.
 
 ## Running locally in development mode
 
@@ -186,8 +195,15 @@ flatpak run --command=flatpak-builder-lint org.flatpak.Builder manifest flatpak/
 
 The manifest builds from the working tree (`type: dir`) and runs the test suite inside
 the build sandbox; a private `dbus-daemon` is built for that and removed from the
-installed app. The Flathub copy pins a git tag and commit instead. The last command is
-Flathub's linter; it reports the screenshot as missing until the release tag is pushed.
+installed app. The last command is Flathub's manifest linter, kept as a sanity check.
+The release workflow (`.github/workflows/release.yml`) runs the same build on every
+pushed `v*` tag and attaches the bundle to the GitHub release; to produce a bundle
+locally, build into a repository and export it:
+
+```bash
+flatpak-builder --user --force-clean --default-branch=stable --repo=repo build-dir flatpak/io.github.MarioStoilov.BtHandsfreeKDE.yml
+flatpak build-bundle --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo repo bt-handsfree-kde-0.1.0-x86_64.flatpak io.github.MarioStoilov.BtHandsfreeKDE stable
+```
 
 ## Sandbox permissions
 

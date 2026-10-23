@@ -17,9 +17,10 @@ publishes call control on the session bus as `org.pipewire.Telephony`; BlueZ
 and alerts use `org.freedesktop.Notifications`. The app never touches audio itself.
 
 Language and toolkit: Python 3.12+, PySide6 (tray, menus, windows), `dbus-fast` for D-Bus
-with `qasync` bridging asyncio onto the Qt event loop. Distribution: Flatpak, published
-on Flathub under the app ID `io.github.MarioStoilov.BtHandsfreeKDE`; the code repository
-is `github.com/MarioStoilov/BtHandsfreeKDE`.
+with `qasync` bridging asyncio onto the Qt event loop. Distribution: a single-file
+Flatpak bundle attached to each GitHub release by `.github/workflows/release.yml`, app ID
+`io.github.MarioStoilov.BtHandsfreeKDE`; not on Flathub (`SCOPE.md`, step 11). The code
+repository is `github.com/MarioStoilov/BtHandsfreeKDE`.
 
 ## Never reason from "this machine"
 
@@ -84,6 +85,9 @@ uv run bt-handsfree                             # run from the working tree (hos
 flatpak-builder --user --install --force-clean build-dir flatpak/io.github.MarioStoilov.BtHandsfreeKDE.yml
 flatpak run io.github.MarioStoilov.BtHandsfreeKDE
 flatpak run --command=flatpak-builder-lint org.flatpak.Builder manifest flatpak/io.github.MarioStoilov.BtHandsfreeKDE.yml
+flatpak-builder --user --force-clean --default-branch=stable --repo=repo build-dir flatpak/io.github.MarioStoilov.BtHandsfreeKDE.yml
+flatpak build-bundle --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo repo bt-handsfree-kde-0.1.0-x86_64.flatpak io.github.MarioStoilov.BtHandsfreeKDE stable
+                                                # the two lines above are what the release workflow runs
 busctl --user call org.pipewire.Telephony /org/pipewire/Telephony org.freedesktop.DBus.ObjectManager GetManagedObjects
                                                 # inspect the live telephony objects while debugging
 uv run bt-handsfree-kde tel:+15550100           # while the app runs: hands the number to it and exits

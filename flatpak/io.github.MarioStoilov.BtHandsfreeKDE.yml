@@ -1,5 +1,5 @@
-# Flatpak manifest. For local builds the app module takes the working tree as its source
-# (type: dir); the Flathub copy of this manifest replaces it with a pinned git tag + commit.
+# Flatpak manifest. The app module takes the working tree as its source (type: dir); the
+# release workflow builds the tagged checkout with it and exports a single-file bundle.
 id: io.github.MarioStoilov.BtHandsfreeKDE
 runtime: org.kde.Platform
 runtime-version: '6.10'
