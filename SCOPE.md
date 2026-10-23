@@ -30,7 +30,8 @@ conversation on 2026-09-19 and are changed here, not in code comments.
   `/io/github/MarioStoilov/BtHandsfreeKDE` with one method, `ShowDialpad(s number)`. A
   later launch hands its number over that method and exits. A launch without a `tel:`
   argument (the app menu entry while the app is running) sends an empty number, which
-  just raises the dialpad. The Flatpak owns that name (`--own-name`).
+  just raises the dialpad. Flatpak lets the app own its own ID by default, so the
+  manifest needs no `--own-name` entry for it.
 
 ### 2. Contacts sync
 
@@ -353,7 +354,31 @@ is reported done.
     setting that provides it (the same names as in the README), and in the tray
     tooltip while it lasts. Checks are repeated when a name appears or leaves the bus.
     Defined under "Startup requirements check" in Features (2026-09-26).
-11. Flathub submission: git-pinned manifest, screenshot, first release.
+11. **Flathub submission.** The store listing needs a screenshot and lowercase
+    AppStream identifiers; the submission needs a manifest that builds from a fixed
+    commit. The screenshot is `data/screenshots/dialpad.png`, the Dialpad tab with
+    the fictional example number and the phone connected, captured on the host with
+    Spectacle; no tab that shows personal data is ever captured. The MetaInfo file
+    references it by its raw GitHub URL at the release tag, carries the icon's blue
+    as branding colours and dates the release to the day the tag is made. Categories
+    are Network and Telephony (one main category, so the app appears once in the
+    menu). The release is the git tag `v0.1.0` on the commit that carries these
+    changes. The Flathub copy of the manifest is this repository's manifest with the
+    app module's `dir` source replaced by a `git` source pinned to that tag and its
+    commit, submitted together with the two requirements files as a pull request to
+    `flathub/flathub` from a `new-pr` branch. The KDE SDK ships libdbus but no
+    `dbus-daemon`, so the manifest builds dbus as a build-time-only module (cleaned
+    up afterwards) for the integration tests; the install step compiles the package
+    afresh and the test run writes no bytecode, so nothing from the test run stays in
+    the installed app. Owning the app's own bus name needs no `--own-name` entry
+    (granted by default; the linter rejects one). Verified on the host with
+    flatpak-builder 1.4.8 on 2026-10-23: the sandbox build runs all 101 tests, the
+    sandboxed app registers its tray item, syncs the phonebook through obexd into its
+    own cache directory (the transfer file is gone after parsing), a second sandboxed
+    launch hands its `tel:` number over and exits, and the exported desktop file
+    registers the `tel:` scheme. Done when the pull request's build on Flathub's
+    infrastructure (x86_64 and aarch64, test suite included) is green and the app is
+    published.
 
 Later, unscheduled: sending messages, reception once PipeWire exposes it.
 
@@ -390,7 +415,3 @@ the sandbox. Each is checked at the next opportunity that provides what it needs
   phone while a call is up closes the call window and the incoming-call notification.
   The gateway removal and the re-syncs on reconnect were exercised without a call;
   the call part is covered by the fake only.
-- **Flatpak sandbox** (steps 2 and 3): the `--own-name` hand-off between two sandboxed
-  launches, the exported desktop file's `tel:` registration, and obexd writing the
-  phonebook file into the sandboxed cache directory. Needs a machine with
-  flatpak-builder; the development host has none.

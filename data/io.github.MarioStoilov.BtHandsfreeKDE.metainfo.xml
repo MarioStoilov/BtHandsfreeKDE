@@ -5,7 +5,7 @@
   <summary>Control phone calls over Bluetooth from the tray</summary>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MIT</project_license>
-  <developer id="io.github.MarioStoilov">
+  <developer id="io.github.mariostoilov">
     <name>Mario Stoilov</name>
   </developer>
   <description>
@@ -38,8 +38,8 @@
   <url type="bugtracker">https://github.com/MarioStoilov/BtHandsfreeKDE/issues</url>
   <url type="vcs-browser">https://github.com/MarioStoilov/BtHandsfreeKDE</url>
   <categories>
-    <category>Utility</category>
     <category>Telephony</category>
+    <category>Network</category>
   </categories>
   <keywords>
     <keyword>bluetooth</keyword>
@@ -54,9 +54,19 @@
     <control>pointing</control>
     <control>keyboard</control>
   </supports>
+  <branding>
+    <color type="primary" scheme_preference="light">#3daee9</color>
+    <color type="primary" scheme_preference="dark">#1d99f3</color>
+  </branding>
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/MarioStoilov/BtHandsfreeKDE/v0.1.0/data/screenshots/dialpad.png</image>
+      <caption>The dialpad with a number ready to call</caption>
+    </screenshot>
+  </screenshots>
   <content_rating type="oars-1.1" />
   <releases>
-    <release version="0.1.0" date="2026-09-19">
+    <release version="0.1.0" date="2026-10-23">
       <description>
         <p>First release: incoming-call notifications, answer, reject, hang up, dial,
           contacts with caller ID, text messages with notifications, DTMF tones, call

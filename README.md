@@ -178,25 +178,30 @@ file of a fetched message, which is deleted after parsing.
 ```bash
 sudo apt install flatpak flatpak-builder            # Debian/Ubuntu
 flatpak remote-add --if-not-exists --user flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+flatpak install --user flathub org.kde.Sdk//6.10 io.qt.PySide.BaseApp//6.10 org.flatpak.Builder
 flatpak-builder --user --install --force-clean build-dir flatpak/io.github.MarioStoilov.BtHandsfreeKDE.yml
 flatpak run io.github.MarioStoilov.BtHandsfreeKDE
+flatpak run --command=flatpak-builder-lint org.flatpak.Builder manifest flatpak/io.github.MarioStoilov.BtHandsfreeKDE.yml
 ```
 
-The manifest builds from the working tree (`type: dir`). The Flathub copy pins a git tag
-and commit instead.
+The manifest builds from the working tree (`type: dir`) and runs the test suite inside
+the build sandbox; a private `dbus-daemon` is built for that and removed from the
+installed app. The Flathub copy pins a git tag and commit instead. The last command is
+Flathub's linter; it reports the screenshot as missing until the release tag is pushed.
 
 ## Sandbox permissions
 
 | Permission | Why |
 | --- | --- |
 | `--talk-name=org.pipewire.Telephony` | Call state and call control from PipeWire |
-| `--own-name=io.github.MarioStoilov.BtHandsfreeKDE` | Single instance: a second launch (a `tel:` link) hands its number to the running app |
 | `--talk-name=org.bluez.obex` | Contacts and messages through obexd |
 | `--talk-name=org.kde.StatusNotifierWatcher` | Tray icon |
 | `--talk-name=org.freedesktop.Notifications` | Call notifications with buttons |
 | `--system-talk-name=org.bluez` | Phone name, connection state, battery |
 | `--socket=wayland`, `--socket=fallback-x11`, `--share=ipc` | Windows |
 | `--socket=pulseaudio` | Dialpad key tones (call audio itself never passes through the app) |
+
+The app also owns its own ID on the session bus for the single-instance hand-off; Flatpak grants that to every app by default.
 
 No network or filesystem access is requested; the transfer files obexd writes land in
 the app's own cache directory, which every Flatpak may write.
