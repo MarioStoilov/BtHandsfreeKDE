@@ -1,6 +1,6 @@
 [project]
 name = "bt-handsfree-kde"
-version = "0.1.0"
+version = "0.1.1"
 description = "Bluetooth hands-free call controller for the KDE Plasma system tray"
 readme = "README.md"
 license = "MIT"
