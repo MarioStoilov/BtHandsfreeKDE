@@ -92,12 +92,13 @@ class HandsfreeTray(QObject):
 
         Args:
             bus: Connected session bus the servers are exported on.
-            fallback_icon: Bundled icon rendered to pixmaps when the theme lacks the app icon.
+            fallback_icon: Bundled icon, rendered to the pixmaps sent with every icon
+                update so hosts that cannot resolve the theme name still show it.
             parent: Optional Qt parent.
         """
         super().__init__(parent)
         self._bus = bus
-        self._fallback_pixmaps = render_icon_pixmaps(fallback_icon)
+        self._icon_pixmaps = render_icon_pixmaps(fallback_icon)
         self._is_service_available = False
         self._gateways: list[AudioGateway] = []
         self._calls: list[Call] = []
@@ -200,13 +201,15 @@ class HandsfreeTray(QObject):
         self._item_service.set_tooltip(APPLICATION_NAME, tooltip_text)
 
     def _set_idle_icon(self) -> None:
-        """Use the installed theme icon when present, otherwise the bundled pixmaps."""
-        theme_has_app_icon = QIcon.hasThemeIcon(APPLICATION_ID)
+        """Name the installed theme icon when this process sees it, and always send pixels.
 
-        if theme_has_app_icon:
-            self._item_service.set_icon(APPLICATION_ID, [])
-        else:
-            self._item_service.set_icon("", self._fallback_pixmaps)
+        The host resolves the name with its own icon search path, which inside a Flatpak
+        differs from this process's; the pixmaps are what it falls back to then.
+        """
+        theme_has_app_icon = QIcon.hasThemeIcon(APPLICATION_ID)
+        icon_name = APPLICATION_ID if theme_has_app_icon else ""
+
+        self._item_service.set_icon(icon_name, self._icon_pixmaps)
 
     def _build_menu(self) -> list[MenuItem]:
         """Create the menu tree for the stored state."""

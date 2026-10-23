@@ -4,6 +4,7 @@ from dbus_fast.aio import MessageBus
 
 from bt_handsfree_kde.dbus.notifications import (
     ANSWER_ACTION,
+    NOTIFICATION_IMAGE_SIZE,
     OPEN_MESSAGE_ACTION,
     URGENCY_CRITICAL,
     DesktopNotifier,
@@ -31,6 +32,12 @@ async def test_incoming_call_notification_round_trip(
     assert shown.actions == [ANSWER_ACTION, "Answer", "reject", "Reject"]
     assert shown.hints["urgency"] == URGENCY_CRITICAL and shown.hints["resident"] is True
     assert shown.expire_timeout == 0
+    width, height, row_stride, has_alpha, bits_per_sample, channels, pixels = shown.hints[
+        "image-data"
+    ]
+    assert (width, height) == (NOTIFICATION_IMAGE_SIZE, NOTIFICATION_IMAGE_SIZE)
+    assert row_stride == width * channels and has_alpha and bits_per_sample == 8
+    assert len(pixels) == row_stride * height
 
     await notifier.show_incoming_call(CALL_PATH, "Alice Doe")
     assert notifications.shown[1].replaces_id == shown.notification_id

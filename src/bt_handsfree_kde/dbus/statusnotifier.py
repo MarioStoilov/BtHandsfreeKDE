@@ -28,7 +28,8 @@ STATUS_ACTIVE = "Active"
 STATUS_NEEDS_ATTENTION = "NeedsAttention"
 # Category reported for an ordinary application tray icon.
 APPLICATION_CATEGORY = "ApplicationStatus"
-# Pixel sizes rendered for the pixmap fallback when no theme icon can be named.
+# Pixel sizes rendered into `IconPixmap`, the host's fallback when it cannot resolve
+# `IconName` (inside a Flatpak the host's icon search path differs from the app's).
 PIXMAP_SIZES = (22, 32, 48)
 # Bytes per pixel of the ARGB32 format the protocol expects.
 BYTES_PER_PIXEL = 4
@@ -57,7 +58,7 @@ class StatusNotifierItemService(ServiceInterface):
         self._tooltip_text = ""
 
     def set_icon(self, icon_name: str, pixmaps: list[list]) -> None:
-        """Change the icon to a theme name, or to pixmaps when `icon_name` is empty."""
+        """Change the icon: a theme name (may be empty) plus the pixmaps hosts fall back to."""
         self._icon_name = icon_name
         self._icon_pixmaps = pixmaps
         self.new_icon()
@@ -108,12 +109,12 @@ class StatusNotifierItemService(ServiceInterface):
 
     @dbus_property(access=PropertyAccess.READ, name="IconName")
     def icon_name(self) -> "s":
-        """Theme icon name, empty when pixmaps are used instead."""
+        """Theme icon name; empty when this process cannot see the icon in any theme."""
         return self._icon_name
 
     @dbus_property(access=PropertyAccess.READ, name="IconPixmap")
     def icon_pixmap(self) -> "a(iiay)":
-        """Rendered icon in several sizes, used when `IconName` is empty."""
+        """Rendered icon in several sizes, used when the host cannot resolve `IconName`."""
         return self._icon_pixmaps
 
     @dbus_property(access=PropertyAccess.READ, name="OverlayIconName")

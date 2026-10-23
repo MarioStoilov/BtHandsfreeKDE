@@ -4,6 +4,13 @@ from dbus_fast import Message
 from dbus_fast.aio import MessageBus
 
 from bt_handsfree_kde.dbus.dbusmenu import DBUSMENU_INTERFACE, MENU_OBJECT_PATH
+from bt_handsfree_kde.dbus.helpers import PROPERTIES_INTERFACE
+from bt_handsfree_kde.dbus.statusnotifier import (
+    BYTES_PER_PIXEL,
+    PIXMAP_SIZES,
+    STATUS_NOTIFIER_ITEM_INTERFACE,
+    STATUS_NOTIFIER_ITEM_PATH,
+)
 from bt_handsfree_kde.dbus.telephony import AudioGateway
 from bt_handsfree_kde.icons import application_icon
 from bt_handsfree_kde.ui.tray import HandsfreeTray
@@ -34,6 +41,26 @@ async def _menu_labels(bus: MessageBus, owner_name: str) -> list[str]:
     return labels
 
 
+async def _icon_pixmap_sizes(bus: MessageBus, owner_name: str) -> list[int]:
+    """Read the item's `IconPixmap` property and return the edge length of each entry."""
+    reply = await bus.call(
+        Message(
+            destination=owner_name,
+            path=STATUS_NOTIFIER_ITEM_PATH,
+            interface=PROPERTIES_INTERFACE,
+            member="Get",
+            signature="ss",
+            body=[STATUS_NOTIFIER_ITEM_INTERFACE, "IconPixmap"],
+        )
+    )
+    sizes: list[int] = []
+    for width, height, pixels in reply.body[0].value:
+        assert width == height and len(pixels) == width * height * BYTES_PER_PIXEL
+        sizes.append(width)
+
+    return sizes
+
+
 async def test_tray_registers_and_serves_the_menu(
     qt_application, client_bus: MessageBus, connect_bus, watcher: FakeWatcherService
 ) -> None:
@@ -46,6 +73,8 @@ async def test_tray_registers_and_serves_the_menu(
 
     tray.update_state(True, [GATEWAY], [], {}, {}, 3, "")
     viewer = await connect_bus()
+    pixmap_sizes = await _icon_pixmap_sizes(viewer, client_bus.unique_name)
+    assert pixmap_sizes == list(PIXMAP_SIZES)
     labels = await _menu_labels(viewer, client_bus.unique_name)
     assert labels[0] == PHONE_ADDRESS
     assert (

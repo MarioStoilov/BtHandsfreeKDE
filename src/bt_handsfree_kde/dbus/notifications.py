@@ -9,7 +9,7 @@ from PySide6.QtCore import QObject, Signal
 
 from bt_handsfree_kde import APPLICATION_ID, APPLICATION_NAME
 from bt_handsfree_kde.dbus.helpers import DBusRequestError, call_method
-from bt_handsfree_kde.icons import application_icon_reference
+from bt_handsfree_kde.icons import application_icon_reference, application_icon_rgba
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +31,12 @@ OPEN_MESSAGE_ACTION = "open-message"
 INCOMING_CALL_CATEGORY = "call.incoming"
 RECEIVED_MESSAGE_CATEGORY = "im.received"
 
+# Edge length in pixels of the app icon image sent with every notification (the
+# `image-data` hint), so the server shows it even when it cannot resolve the icon name.
+NOTIFICATION_IMAGE_SIZE = 64
+# Bits per colour channel and channel count of that image (RGBA, 8 bits each).
+NOTIFICATION_IMAGE_BITS_PER_SAMPLE = 8
+NOTIFICATION_IMAGE_CHANNELS = 4
 # Separator between a notification's summary and the phone it concerns.
 PHONE_LABEL_SEPARATOR = " · "
 # Urgency levels defined by the notification specification.
@@ -61,6 +67,7 @@ class DesktopNotifier(QObject):
         self._key_by_notification_id: dict[int, str] = {}
         self._supports_actions = False
         self._supports_persistence = False
+        self._image_data_hint = _image_data_hint()
 
     @property
     def supports_call_notifications(self) -> bool:
@@ -168,7 +175,7 @@ class DesktopNotifier(QObject):
 
     async def show_information(self, summary: str, body: str, urgency: int = URGENCY_LOW) -> None:
         """Show a plain informational notification with the server's default expiry."""
-        hints = _hints(urgency, resident=False, category="")
+        hints = _hints(urgency, False, "", self._image_data_hint)
         icon_reference = application_icon_reference()
 
         try:
@@ -217,7 +224,7 @@ class DesktopNotifier(QObject):
             expiry_ms: Timeout, `NEVER_EXPIRE_MS` or `SERVER_DEFAULT_EXPIRY_MS`.
         """
         replaces_id = self._notification_id_by_key.get(key, 0)
-        hints = _hints(urgency, resident, category)
+        hints = _hints(urgency, resident, category, self._image_data_hint)
         icon_reference = application_icon_reference()
 
         try:
@@ -275,18 +282,41 @@ def _summary_with_phone(summary: str, phone_label: str) -> str:
     return f"{summary}{PHONE_LABEL_SEPARATOR}{phone_label}"
 
 
-def _hints(urgency: int, resident: bool, category: str) -> dict[str, Any]:
+def _image_data_hint() -> Variant:
+    """Render the app icon into the `image-data` hint value of the notification spec.
+
+    The value is (width, height, row stride, has alpha, bits per sample, channels,
+    pixels). Servers prefer it over the icon reference, so the icon shows even when the
+    reference does not resolve for the server, as inside a Flatpak.
+    """
+    width, height, row_stride, pixels = application_icon_rgba(NOTIFICATION_IMAGE_SIZE)
+    image_data = [
+        width,
+        height,
+        row_stride,
+        True,
+        NOTIFICATION_IMAGE_BITS_PER_SAMPLE,
+        NOTIFICATION_IMAGE_CHANNELS,
+        pixels,
+    ]
+
+    return Variant("(iiibiiay)", image_data)
+
+
+def _hints(urgency: int, resident: bool, category: str, image_data: Variant) -> dict[str, Any]:
     """Build the hints dictionary shared by every notification the app sends.
 
     Args:
         urgency: One of the `URGENCY_*` values.
         resident: Whether the notification stays after a button was pressed.
         category: Notification category hint; empty to send none.
+        image_data: The app icon's pixels, from `_image_data_hint`.
     """
     hints = {
         "urgency": Variant("y", urgency),
         "desktop-entry": Variant("s", APPLICATION_ID),
         "resident": Variant("b", resident),
+        "image-data": image_data,
     }
     if category:
         hints["category"] = Variant("s", category)

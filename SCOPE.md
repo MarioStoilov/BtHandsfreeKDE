@@ -241,6 +241,12 @@ depends on and keeps running with whatever works:
 
 - The icon reflects call state (idle, incoming, active). The tooltip shows the phone's
   name and battery percentage (`org.bluez.Battery1` on the phone's device object).
+- The app icon is delivered as pixels, not only by name: the tray item always carries
+  `IconPixmap` next to `IconName`, and every notification carries the `image-data`
+  hint next to the icon reference. Inside a Flatpak the host resolves icon names with
+  its own search path, which only includes Flatpak's export directory after a login
+  that followed the Flatpak installation; a name alone left the tray item blank and
+  notifications with a generic icon (observed with the 0.1.1 bundle, 2026-10-23).
 - Left and right click both open the same dropdown menu. Qt's tray class cannot do
   this on Plasma (it hardcodes `ItemIsMenu = false` and opens its own popup, which
   Wayland refuses), so the app implements the `org.kde.StatusNotifierItem` and

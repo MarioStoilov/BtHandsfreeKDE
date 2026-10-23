@@ -57,7 +57,7 @@ carries a single-file Flatpak bundle for x86_64. Install it with Flatpak (the KD
 it needs is fetched from Flathub, which the bundle adds as a remote if it is missing):
 
 ```bash
-flatpak install --user ./bt-handsfree-kde-0.1.1-x86_64.flatpak
+flatpak install --user ./bt-handsfree-kde-0.1.2-x86_64.flatpak
 flatpak run io.github.MarioStoilov.BtHandsfreeKDE
 ```
 
@@ -202,7 +202,7 @@ locally, build into a repository and export it:
 
 ```bash
 flatpak-builder --user --force-clean --default-branch=stable --repo=repo build-dir flatpak/io.github.MarioStoilov.BtHandsfreeKDE.yml
-flatpak build-bundle --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo repo bt-handsfree-kde-0.1.1-x86_64.flatpak io.github.MarioStoilov.BtHandsfreeKDE stable
+flatpak build-bundle --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo repo bt-handsfree-kde-0.1.2-x86_64.flatpak io.github.MarioStoilov.BtHandsfreeKDE stable
 ```
 
 ## Sandbox permissions
