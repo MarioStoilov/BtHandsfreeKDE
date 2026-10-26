@@ -269,9 +269,10 @@ clicked.
   put a last-connected time on D-Bus (it stays in its root-only storage), so the list
   is ordered by name and carries no dates. The list follows BlueZ's signals, so
   pairing or removing a phone in the system Bluetooth settings updates it at once.
-- **Call audio** (`ui/call_audio_page.py`): what the settings window held before: one
-  group per connected phone with a speaker slider and a microphone slider over the
-  HFP gain range (0–15, shown as %), the "Play call audio on this computer" checkbox
+- **Call audio** (`ui/call_audio_page.py`): the computer's device choosers defined
+  under "Call audio devices", then what the settings window held before: one group
+  per connected phone with a speaker slider and a microphone slider over the HFP
+  gain range (0–15, shown as %), the "Play call audio on this computer" checkbox
   and the negotiated codec while an audio link is open.
 - **About** (`ui/about_page.py`): the About content unchanged: application icon,
   name, version from `__version__`, the one-line description, links to the
@@ -284,6 +285,56 @@ clicked.
   it already tracked and offers the paired phones as a list; nothing new is read from
   any other service, and the Flatpak manifest is unchanged (`org.bluez` was already
   allowed on the system bus).
+
+### 9. Call audio devices
+
+Defined 2026-10-26 (build step 15). The Call audio tab lets the user choose which of the
+computer's speakers and microphones carry a call, instead of whatever the system
+default devices are at the time.
+
+- **How call audio flows.** While an audio link to the phone is open, PipeWire's
+  Bluetooth device exposes two nodes for it: a source carrying the far end's voice
+  (`bluez_input.<address>.N`, class `Audio/Source`) and a sink that takes what the
+  phone should hear (`bluez_output.<address>.N`, class `Audio/Sink`), both with
+  `api.bluez5.profile = headset-audio-gateway` and `node.autoconnect = true`.
+  WirePlumber links such nodes through its ordinary target hooks: a `target.object`
+  entry for the node in the `default` metadata wins, otherwise the default sink or
+  source. The app therefore sets `target.object` on the phone's source node to the
+  chosen speaker's `node.name`, and on the phone's sink node to the chosen
+  microphone's `node.name`; WirePlumber re-links as soon as the entry changes
+  (`linking/rescan` reacts to `target.object` changes) and, since these nodes carry
+  no routes, also stores the target itself under `node.stream.restore-target`.
+  Verified in WirePlumber 0.5.13's scripts and PipeWire 1.6.2's sources on
+  2026-10-26. Clearing the entry returns the node to the system default.
+- **The first non-D-Bus client.** Metadata lives on PipeWire's native protocol, so
+  `audio/pipewire.py` talks to libpipewire over ctypes, as `dtmf.py` does with
+  libpulse: a thread loop, a context connected with `media.category = Manager`
+  (which is what WirePlumber requires to grant a sandboxed client write access),
+  the registry for the node list and the `default` metadata object for writing.
+  The registry's `global` event carries only a fixed subset of a node's properties
+  (name, description, media class and a few more), without the `api.bluez5.*` keys
+  that mark a phone's nodes, so every node is bound and its full property set is
+  taken from its `info` event, as `pw-dump` does. Callbacks run on PipeWire's
+  thread and are handed to the Qt thread. The app still never carries audio.
+- **What the tab shows.** A "This computer" group with "Play calls on" and
+  "Microphone" choosers. Each lists "System default" and every current sink or
+  source by its `node.description` (the phone's own nodes excluded), and shows a
+  saved device that is not present right now as "<name> (not available)" so the
+  choice is visible while a headset is off. Below the group a line says when
+  PipeWire cannot be reached ("PipeWire not reachable; calls use the system
+  default devices"); the phone groups with the sliders follow as before.
+- **Persistence.** The choice is the first thing the app stores: `node.name` of the
+  speaker and of the microphone, in `settings.ini` under the app's XDG config
+  directory (`audio/preferences.py`, the single settings module; an empty value
+  means the system default). Device names are not personal data. The choice is
+  applied to every phone's nodes each time they appear, so it also holds when
+  WirePlumber's own restore is disabled, and it is applied at once to nodes of a
+  call in progress.
+- **Sandbox**: `--filesystem=xdg-run/pipewire-0` for the native socket; the KDE
+  runtime ships `libpipewire-0.3.so.0`. The KDE SDK ships no PipeWire daemon, so the
+  native client has no private-daemon test; the device list derivation, the target
+  choice per node, the preferences file and the router logic are unit-tested and
+  the client itself is verified live.
 
 ## Tray icon and menu
 
@@ -477,8 +528,17 @@ is reported done.
     shared by calls, notifications and conversations. The call window itself was
     not exercised with a live call; that stays under Pending verifications.
 15. **Audio device choice.** Next to the volume and microphone settings, a choice of
-    which of the computer's speakers and microphones carry the call audio. Definition
-    and the mapping onto PipeWire are written under Features before the work starts.
+    which of the computer's speakers and microphones carry the call audio. Defined
+    under "Call audio devices" in Features (2026-10-26). Observed on the host
+    (2026-10-26): the Call audio tab lists the computer's five devices by
+    description, a stored speaker is selected by its description and a stored
+    microphone that is absent shows as "(not available)"; with a throwaway null
+    node carrying a phone's profile and address, the app wrote `target.object` with
+    the stored microphone for the sink-like node and the system default for the
+    source-like node, rewrote both when the choice changed, and `pw-metadata`
+    showed the entries; the sandboxed app connects with `media.category = Manager`
+    and `pipewire.sec.flatpak = true` and writes the same entries. A real call
+    with a chosen device is listed under Pending verifications.
 
 Later, unscheduled: sending messages, reception once PipeWire exposes it.
 
@@ -492,6 +552,11 @@ is done and the observed outcome has been stated.
 Behaviour that is implemented but has not yet been exercised against a real phone or
 the sandbox. Each is checked at the next opportunity that provides what it needs.
 
+- **Call audio on a chosen device** (step 15): with a speaker or microphone other
+  than the system default chosen in the Call audio tab, a call's far-end voice plays
+  on that speaker and the phone receives that microphone, as the metadata written for
+  the phone's nodes requests. Exercised with throwaway nodes carrying a phone's
+  properties only; the development host had no call during the step.
 - **Caller ID on a live incoming call** (steps 3 and 14): a call from a number in
   the synced phonebook, arriving with an empty HFP `Name`, shows the contact's name
   in the notification, the call window and the tray, including a contact stored in

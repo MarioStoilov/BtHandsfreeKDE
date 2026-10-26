@@ -5,6 +5,7 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QHBoxLayout, QPushButton, QTabWidget, QVBoxLayout, QWidget
 
 from bt_handsfree_kde import APPLICATION_NAME
+from bt_handsfree_kde.audio.devices import AudioDevice, CallAudioChoice
 from bt_handsfree_kde.dbus.bluez import PhoneInfo
 from bt_handsfree_kde.dbus.telephony import AudioGateway
 from bt_handsfree_kde.ui.about_page import AboutPage
@@ -27,9 +28,13 @@ class SettingsWindow(QWidget):
     microphone_volume_changed = Signal(str, int)
     # Emitted with (gateway path, audio on this computer) when the checkbox toggles.
     audio_on_computer_changed = Signal(str, bool)
+    # Emitted with the device's `node.name` (empty for the system default) when the user
+    # picks the computer's speaker or microphone for calls.
+    speaker_device_changed = Signal(str)
+    microphone_device_changed = Signal(str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
-        """Build the tabs; `update_state` fills the Phones and Call audio tabs."""
+        """Build the tabs; `update_state` and `update_audio_devices` fill them."""
         super().__init__(parent)
         self.setWindowTitle(f"{APPLICATION_NAME} settings")
         self.setFixedWidth(WINDOW_WIDTH)
@@ -55,6 +60,8 @@ class SettingsWindow(QWidget):
         self._call_audio_page.speaker_volume_changed.connect(self.speaker_volume_changed)
         self._call_audio_page.microphone_volume_changed.connect(self.microphone_volume_changed)
         self._call_audio_page.audio_on_computer_changed.connect(self.audio_on_computer_changed)
+        self._call_audio_page.speaker_device_changed.connect(self.speaker_device_changed)
+        self._call_audio_page.microphone_device_changed.connect(self.microphone_device_changed)
         close_button.clicked.connect(self.close)
 
     def update_state(
@@ -83,6 +90,23 @@ class SettingsWindow(QWidget):
         )
         self._call_audio_page.update_gateways(gateways, phone_info_by_address)
         self.adjustSize()
+
+    def update_audio_devices(
+        self,
+        is_available: bool,
+        speakers: list[AudioDevice],
+        microphones: list[AudioDevice],
+        choice: CallAudioChoice,
+    ) -> None:
+        """Give the Call audio tab the computer's devices and the stored choice.
+
+        Args:
+            is_available: Whether PipeWire is reachable.
+            speakers: The computer's sink-like devices, in display order.
+            microphones: The computer's source-like devices, in display order.
+            choice: The stored devices; empty names mean the system default.
+        """
+        self._call_audio_page.update_devices(is_available, speakers, microphones, choice)
 
     def show_phones(self) -> None:
         """Open the window on the Phones tab."""

@@ -3,8 +3,18 @@
 from PySide6.QtWidgets import QCheckBox, QLabel, QPushButton
 
 from bt_handsfree_kde import ISSUES_URL, LICENSE_URL, REPOSITORY_URL, __version__
+from bt_handsfree_kde.audio.devices import (
+    DEVICE_KIND_SINK,
+    DEVICE_KIND_SOURCE,
+    AudioDevice,
+    CallAudioChoice,
+)
 from bt_handsfree_kde.dbus.bluez import PhoneInfo
-from bt_handsfree_kde.ui.call_audio_page import NO_PHONE_TEXT
+from bt_handsfree_kde.ui.call_audio_page import (
+    NO_PHONE_TEXT,
+    NOT_AVAILABLE_SUFFIX,
+    SYSTEM_DEFAULT_TEXT,
+)
 from bt_handsfree_kde.ui.phones_page import (
     BLUETOOTH_UNAVAILABLE_TEXT,
     CONNECTED_WITHOUT_LINK_TEXT,
@@ -118,3 +128,35 @@ def test_about_tab_shows_version_and_links_and_close_hides(qt_application) -> No
     assert window._tabs.currentWidget() is window._call_audio_page
     window.findChild(QPushButton).click()
     assert not window.isVisible()
+
+
+def test_call_audio_tab_lists_the_computers_devices(qt_application) -> None:
+    """The choosers list the devices, keep an absent choice visible and report picks."""
+    window = SettingsWindow()
+    picks: list[tuple[str, str]] = []
+    window.speaker_device_changed.connect(lambda name: picks.append(("speaker", name)))
+    window.microphone_device_changed.connect(lambda name: picks.append(("microphone", name)))
+    call_audio_page = window._call_audio_page
+    assert not call_audio_page._devices_status_label.isHidden()
+    assert not call_audio_page._speaker_chooser.isEnabled()
+
+    speakers = [AudioDevice(7, "alsa_output.example", "Example Speakers", DEVICE_KIND_SINK)]
+    microphones = [AudioDevice(9, "alsa_input.example", "Example Microphone", DEVICE_KIND_SOURCE)]
+    choice = CallAudioChoice("bluez_output.headset", "alsa_input.example")
+    window.update_audio_devices(True, speakers, microphones, choice)
+
+    speaker_chooser = call_audio_page._speaker_chooser
+    speaker_labels = [speaker_chooser.itemText(index) for index in range(speaker_chooser.count())]
+    assert speaker_labels == [
+        SYSTEM_DEFAULT_TEXT,
+        "Example Speakers",
+        f"bluez_output.headset{NOT_AVAILABLE_SUFFIX}",
+    ]
+    assert speaker_chooser.currentData() == "bluez_output.headset"
+    assert call_audio_page._microphone_chooser.currentText() == "Example Microphone"
+    assert call_audio_page._devices_status_label.isHidden()
+    assert picks == []
+
+    speaker_chooser.setCurrentIndex(1)
+    call_audio_page._microphone_chooser.setCurrentIndex(0)
+    assert picks == [("speaker", "alsa_output.example"), ("microphone", "")]

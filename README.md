@@ -16,7 +16,8 @@ current call, speaker and microphone levels (which open the settings window with
 sliders), a toggle for where call audio plays, the dialpad, contacts, messages and
 settings, and the phone's battery level next to its name. The settings window lists
 the phones connected now and the other phones paired with the computer, holds the call
-audio controls and the About page.
+audio controls, where you also choose which of the computer's speakers and microphones
+carry calls, and the About page.
 
 Planned: sending messages.
 The full feature list, how each maps onto the Bluetooth stack, and the known
@@ -42,6 +43,9 @@ shortcomings are in [`SCOPE.md`](SCOPE.md).
   supports actions. Developed and tested on KDE Plasma 6.
 - The libpulse library (`libpulse0` on Debian and Ubuntu, `pulseaudio-libs` on Fedora)
   for the dialpad key tones; without it the keys are silent.
+- The libpipewire client library (`libpipewire-0.3-0` on Debian and Ubuntu,
+  `pipewire-libs` on Fedora; installed with PipeWire itself) for choosing the
+  computer's call audio devices; without it calls use the system default devices.
 - Your phone paired and connected with the hands-free profile.
 
 On launch the app checks these and, when something is missing, opens a window that
@@ -218,6 +222,7 @@ flatpak build-bundle --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakr
 | `--system-talk-name=org.bluez` | Phone name, connection state, battery |
 | `--socket=wayland`, `--socket=fallback-x11`, `--share=ipc` | Windows |
 | `--socket=pulseaudio` | Dialpad key tones (call audio itself never passes through the app) |
+| `--filesystem=xdg-run/pipewire-0` | Listing the computer's audio devices and routing call audio to the chosen ones through PipeWire's native socket |
 
 The app also owns its own ID on the session bus for the single-instance hand-off; Flatpak grants that to every app by default.
 

@@ -29,6 +29,11 @@ finish-args:
   # Local DTMF key tones on the dialpad, played through the PulseAudio API PipeWire serves.
   # Call audio itself never passes through the app.
   - --socket=pulseaudio
+  # PipeWire's native socket: the computer's audio devices are listed and the phone's
+  # call nodes are routed to the chosen ones through metadata. The client connects as
+  # a manager, which is what WirePlumber requires before it lets a sandboxed client
+  # write metadata.
+  - --filesystem=xdg-run/pipewire-0
 cleanup-commands:
   - /app/cleanup-BaseApp.sh
 modules:

@@ -10,11 +10,14 @@ that go with them. The feature set, the mapping of each feature onto the Bluetoo
 known shortcomings and the build order live in **`SCOPE.md`**; read it before proposing or
 implementing a feature, and change it there when a decision changes.
 
-It is a pure D-Bus client: PipeWire's native HFP backend does the Bluetooth work and
+It is a D-Bus client: PipeWire's native HFP backend does the Bluetooth work and
 publishes call control on the session bus as `org.pipewire.Telephony`; BlueZ
 (`org.bluez`, system bus) provides device name, connection state and battery; obexd
 (`org.bluez.obex`) provides contacts and messages; the tray icon is a StatusNotifierItem
-and alerts use `org.freedesktop.Notifications`. The app never touches audio itself.
+and alerts use `org.freedesktop.Notifications`. The one non-D-Bus connection is a native
+PipeWire client (`audio/pipewire.py`, libpipewire over ctypes) that lists the computer's
+audio devices and sets the routing metadata of the phone's call nodes. The app never
+carries audio itself.
 
 Language and toolkit: Python 3.12+, PySide6 (tray, menus, windows), `dbus-fast` for D-Bus
 with `qasync` bridging asyncio onto the Qt event loop. Distribution: a single-file
@@ -131,8 +134,9 @@ The D-Bus surface the app consumes (verified against PipeWire 1.6 / WirePlumber 
 
 Three layers: the `dbus/` package holds everything that speaks a D-Bus protocol and
 creates no widgets; the `contacts/` package holds the phonebook feature's non-UI parts;
-the `messages/` package the same for messages; the `ui/` package holds the windows,
-tabs and tray. The package root keeps the wiring
+the `messages/` package the same for messages; the `audio/` package the same for the
+call audio device choice (including the native PipeWire client); the `ui/` package
+holds the windows, tabs and tray. The package root keeps the wiring
 (`app.py`, `__main__.py`) and the small modules every layer shares (`icons.py`,
 `phone_numbers.py`, `dtmf.py`). A new D-Bus client or server goes into `dbus/`, a new
 widget into `ui/`, and a feature that grows beyond one module gets its own package like
@@ -184,6 +188,15 @@ through `dbus/obex.py`.
 - `messages/message.py`: `TextMessage`, `message_from_properties`, `parse_timestamp`.
 - `messages/bmessage.py`: `parse_bmessage` (read flag, originator number, text).
 - `messages/conversations.py`: `Conversation`, `group_conversations`, `conversation_key`.
+- `audio/devices.py`: `AudioDevice`, `CallAudioNode`, `CallAudioChoice`, the device
+  kinds, `device_from_node_properties`, `call_audio_node_from_properties`,
+  `target_device_name`.
+- `audio/pipewire.py`: `PipeWireClient` (libpipewire over ctypes: thread loop, manager
+  connection, registry listener, `default` metadata writes), `libpipewire_is_available`.
+- `audio/preferences.py`: `CallAudioPreferences`, the single settings module; the
+  chosen speaker and microphone in `settings.ini` under the app's config directory.
+- `audio/router.py`: `CallAudioRouter`; owns the client and the preferences, applies
+  the choice to every call node as it appears and publishes devices and state.
 - `ui/call_window.py`: `CallWindow`, always-on-top window for the shown call: icon buttons
   (Answer / Reject or Hold / Hang up) and the collapsible DTMF dialpad.
 - `ui/main_window.py`: `MainWindow`, phone chooser (several phones only) above the
@@ -201,13 +214,14 @@ through `dbus/obex.py`.
   and a Close button; `show_phones` / `show_call_audio` / `show_about` open it on a tab.
 - `ui/phones_page.py`: `PhonesPage`; the phones with a hands-free link now (name,
   address, battery) and the other paired phones from BlueZ (name, address, state).
-- `ui/call_audio_page.py`: `CallAudioPage`; per-phone volume sliders, audio routing,
-  codec.
+- `ui/call_audio_page.py`: `CallAudioPage`; the computer's speaker and microphone
+  choosers, then per-phone volume sliders, audio routing, codec.
 - `ui/about_page.py`: `AboutPage`; icon, name, version, description, links, disclosure.
 - `ui/dependencies_window.py`: `DependenciesWindow`; one row per checked item with its
   detail and, when missing, its remedy; Close.
 - `dtmf.py`: DTMF tone synthesis, `DtmfTonePlayer` (libpulse-simple via ctypes, one
   short thread per key press) and `libpulse_simple_is_available` for the startup check.
+  `audio/pipewire.py` follows the same ctypes conventions for libpipewire.
 - `ui/tray.py`: `HandsfreeTray`; builds the `MenuItem` tree and icon/tooltip/status from
   state and pushes them to the two protocol servers.
 - `icons.py`: bundled icon path, `application_icon()` for windows, and

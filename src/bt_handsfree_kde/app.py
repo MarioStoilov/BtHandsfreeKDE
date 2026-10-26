@@ -12,6 +12,9 @@ from dbus_fast.aio import MessageBus
 from PySide6.QtCore import QObject, QTimer
 from PySide6.QtWidgets import QApplication
 
+from bt_handsfree_kde.audio.pipewire import PipeWireClient
+from bt_handsfree_kde.audio.preferences import CallAudioPreferences
+from bt_handsfree_kde.audio.router import CallAudioRouter
 from bt_handsfree_kde.contacts.client import (
     AUTOMATIC_SYNC_DELAY_S as CONTACTS_SYNC_DELAY_S,
 )
@@ -104,6 +107,7 @@ class HandsfreeApplication(QObject):
         self._notifier: DesktopNotifier | None = None
         self._tray: HandsfreeTray | None = None
         self._phones = PhoneInfoClient(self)
+        self._audio_router = CallAudioRouter(PipeWireClient(self), CallAudioPreferences(), self)
 
         # Monotonic timestamp at which each call became active, keyed by call path.
         self._call_started_at: dict[str, float] = {}
@@ -132,6 +136,9 @@ class HandsfreeApplication(QObject):
         self._settings_window.speaker_volume_changed.connect(self._set_speaker_volume)
         self._settings_window.microphone_volume_changed.connect(self._set_microphone_volume)
         self._settings_window.audio_on_computer_changed.connect(self._set_audio_on_computer)
+        self._settings_window.speaker_device_changed.connect(self._audio_router.set_speaker)
+        self._settings_window.microphone_device_changed.connect(self._audio_router.set_microphone)
+        self._audio_router.state_changed.connect(self._refresh_audio_devices)
         self._main_window.dial_requested.connect(self._dial)
         self._main_window.tone_requested.connect(self._send_tone_on_gateway)
         self._main_window.refresh_contacts_requested.connect(self._refresh_contacts)
@@ -209,6 +216,9 @@ class HandsfreeApplication(QObject):
         await self._tray.start()
         await self._obex.start()
         await self._telephony.start()
+        # The audio router needs the running asyncio loop, which PipeWire's thread
+        # hands its events to; it routes any audio link already open on connect.
+        self._audio_router.start()
 
         self._refresh_views()
 
@@ -225,6 +235,7 @@ class HandsfreeApplication(QObject):
         the session connection closing; nothing is sent first.
         """
         self._phones.stop()
+        self._audio_router.stop()
         if self._dependencies is not None:
             self._dependencies.stop()
         if self._session_bus is not None:
@@ -557,6 +568,7 @@ class HandsfreeApplication(QObject):
         """Push the combined state to the tray, the settings window and the main window."""
         self._refresh_tray()
         self._refresh_settings()
+        self._refresh_audio_devices()
         self._refresh_main_window()
 
     def _call_with_contact_name(self, call: Call) -> Call:
@@ -653,6 +665,15 @@ class HandsfreeApplication(QObject):
             phone_info_by_address,
             paired_phones,
             self._phones.is_available,
+        )
+
+    def _refresh_audio_devices(self) -> None:
+        """Give the settings window the computer's devices and the stored choice."""
+        self._settings_window.update_audio_devices(
+            self._audio_router.is_available,
+            self._audio_router.speakers,
+            self._audio_router.microphones,
+            self._audio_router.choice,
         )
 
     def _refresh_main_window(self) -> None:
