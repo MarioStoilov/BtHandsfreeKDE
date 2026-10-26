@@ -13,8 +13,10 @@ carry. The Messages tab shows the newest SMS conversations from the phone; a new
 message arrives as a notification with an Open button, and opening a conversation marks
 it read on the phone. The tray icon opens the same menu on left and right click: the
 current call, speaker and microphone levels (which open the settings window with
-sliders), a toggle for where call audio plays, the dialpad, contacts and messages, and
-the phone's battery level next to its name.
+sliders), a toggle for where call audio plays, the dialpad, contacts, messages and
+settings, and the phone's battery level next to its name. The settings window lists
+the phones connected now and the other phones paired with the computer, holds the call
+audio controls and the About page.
 
 Planned: sending messages.
 The full feature list, how each maps onto the Bluetooth stack, and the known

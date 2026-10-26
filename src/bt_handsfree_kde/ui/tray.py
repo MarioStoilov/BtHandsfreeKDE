@@ -49,7 +49,7 @@ PHONE_ICON = "smartphone"
 DIALPAD_ICON = "input-dialpad"
 CONTACTS_ICON = "view-pim-contacts"
 MESSAGES_ICON = "mail-message"
-ABOUT_ICON = "help-about"
+SETTINGS_ICON = "configure"
 REQUIREMENTS_ICON = "dialog-warning"
 SPEAKER_ICON = "audio-volume-high"
 MICROPHONE_ICON = "audio-input-microphone"
@@ -73,14 +73,14 @@ class HandsfreeTray(QObject):
     call_focus_requested = Signal(str)
     # Audio routing toggle: (gateway path, audio on this computer).
     audio_on_computer_toggled = Signal(str, bool)
-    # The volume entries open the settings window.
-    settings_requested = Signal()
+    # The volume entries open the settings window on its Call audio tab.
+    call_audio_settings_requested = Signal()
     # The Dialpad, Contacts and Messages entries open the main window on that tab.
     dialpad_requested = Signal()
     contacts_requested = Signal()
     messages_requested = Signal()
-    # The About entry opens the About window.
-    about_requested = Signal()
+    # The Settings entry opens the settings window on its Phones tab.
+    settings_requested = Signal()
     # The entry shown while a requirement is missing opens the requirements window.
     requirements_requested = Signal()
     quit_requested = Signal()
@@ -266,13 +266,13 @@ class HandsfreeTray(QObject):
             key="messages",
             on_activated=self.messages_requested.emit,
         )
-        about_item = MenuItem(
-            f"About {APPLICATION_NAME}", ABOUT_ICON, on_activated=self.about_requested.emit
+        settings_item = MenuItem(
+            "Settings…", SETTINGS_ICON, on_activated=self.settings_requested.emit
         )
         menu_items.append(dialpad_item)
         menu_items.append(contacts_item)
         menu_items.append(messages_item)
-        menu_items.append(about_item)
+        menu_items.append(settings_item)
         menu_items.append(MenuItem.separator())
 
         menu_items.extend(closing_items)
@@ -357,7 +357,7 @@ class HandsfreeTray(QObject):
         return [description, hangup_item]
 
     def _gateway_items(self, gateway: AudioGateway) -> list[MenuItem]:
-        """Return the volume entries (which open settings) and the audio routing toggle."""
+        """Return the volume entries (which open the Call audio tab) and the routing toggle."""
         speaker_percent = volume_percent(gateway.speaker_volume)
         microphone_percent = volume_percent(gateway.microphone_volume)
         audio_on_computer = not gateway.reject_sco
@@ -370,13 +370,13 @@ class HandsfreeTray(QObject):
                 f"Speaker {speaker_percent} %",
                 SPEAKER_ICON,
                 key=f"speaker:{gateway.path}",
-                on_activated=self.settings_requested.emit,
+                on_activated=self.call_audio_settings_requested.emit,
             ),
             MenuItem(
                 f"Microphone {microphone_percent} %",
                 MICROPHONE_ICON,
                 key=f"microphone:{gateway.path}",
-                on_activated=self.settings_requested.emit,
+                on_activated=self.call_audio_settings_requested.emit,
             ),
             MenuItem(
                 "Call audio on this computer",

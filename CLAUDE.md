@@ -160,7 +160,9 @@ through `dbus/obex.py`.
   titles, details and remedies.
 - `dbus/telephony.py`: `TelephonyClient` (**reference implementation** for the coding
   standards), `AudioGateway`, `Call`, call-state constants, `TelephonyError`.
-- `dbus/bluez.py`: `PhoneInfoClient`, `PhoneInfo` (alias, connected, battery).
+- `dbus/bluez.py`: `PhoneInfoClient`, `PhoneInfo` (alias, connected, battery, paired,
+  hands-free capable from the service UUIDs, icon name); `paired_phones()` lists the
+  paired devices that offer the Hands-Free Audio Gateway service.
 - `dbus/notifications.py`: `DesktopNotifier`; incoming-call, new-message and
   informational notifications; capability check.
 - `dbus/obex.py`: `ObexClient` (sessions, calls on session objects, transfer waiting,
@@ -195,9 +197,13 @@ through `dbus/obex.py`.
 - `ui/keypad.py`: the 12-key grid and its font, shared by the call window and the dialpad.
 - `phone_numbers.py`: `dial_string_from_text`, `number_from_tel_uri` (RFC 3966),
   `digits_of`, `same_number` (national vs international matching rule).
-- `ui/settings_window.py`: `SettingsWindow`, per-phone volume sliders, audio routing, codec.
-- `ui/about_window.py`: `AboutWindow`; icon, name, version, description, links,
-  disclosure, Close.
+- `ui/settings_window.py`: `SettingsWindow`; the Phones, Call audio and About tabs
+  and a Close button; `show_phones` / `show_call_audio` / `show_about` open it on a tab.
+- `ui/phones_page.py`: `PhonesPage`; the phones with a hands-free link now (name,
+  address, battery) and the other paired phones from BlueZ (name, address, state).
+- `ui/call_audio_page.py`: `CallAudioPage`; per-phone volume sliders, audio routing,
+  codec.
+- `ui/about_page.py`: `AboutPage`; icon, name, version, description, links, disclosure.
 - `ui/dependencies_window.py`: `DependenciesWindow`; one row per checked item with its
   detail and, when missing, its remedy; Close.
 - `dtmf.py`: DTMF tone synthesis, `DtmfTonePlayer` (libpulse-simple via ctypes, one

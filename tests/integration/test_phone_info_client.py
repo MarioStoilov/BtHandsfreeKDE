@@ -1,6 +1,6 @@
 """Tests for the BlueZ client against the fake BlueZ service."""
 
-from bt_handsfree_kde.dbus.bluez import PhoneInfoClient
+from bt_handsfree_kde.dbus.bluez import HANDS_FREE_AUDIO_GATEWAY_UUID, PhoneInfoClient
 from tests.conftest import PHONE_ADDRESS, PHONE_ALIAS, wait_until
 from tests.fakes.bluez_service import FakeBlueZService
 
@@ -89,3 +89,31 @@ async def test_bluez_appearing_later_is_picked_up(private_buses: str, connect_bu
 
     await wait_until(lambda: client.is_available, "BlueZ appeared")
     assert client.info_for_address(PHONE_ADDRESS).alias == PHONE_ALIAS
+
+
+async def test_paired_phones_lists_only_paired_hands_free_devices(
+    private_buses: str, bluez: FakeBlueZService
+) -> None:
+    """Unpaired devices and paired devices without the gateway service are left out."""
+    bluez.add_device(PHONE_ADDRESS, PHONE_ALIAS, connected=False)
+    tv_path = bluez.add_device("AA:BB:CC:DD:EE:03", "Living room TV", paired=False)
+    headset_path = bluez.add_device("AA:BB:CC:DD:EE:04", "Headset", service_uuids=[])
+    client = PhoneInfoClient()
+
+    await client.start()
+    phone_aliases = [phone.alias for phone in client.paired_phones()]
+    assert phone_aliases == [PHONE_ALIAS]
+    phone_info = client.info_for_address(PHONE_ADDRESS)
+    assert (
+        phone_info.paired and phone_info.is_hands_free_capable and phone_info.icon_name == "phone"
+    )
+
+    bluez.set_paired(tv_path, True)
+    await wait_until(lambda: len(client.paired_phones()) == 2, "TV paired")
+    bluez.set_service_uuids(headset_path, [HANDS_FREE_AUDIO_GATEWAY_UUID])
+    await wait_until(lambda: len(client.paired_phones()) == 3, "headset gained the service")
+    phone_aliases = [phone.alias for phone in client.paired_phones()]
+    assert phone_aliases == ["Headset", "Living room TV", PHONE_ALIAS]
+
+    bluez.set_paired(tv_path, False)
+    await wait_until(lambda: len(client.paired_phones()) == 2, "TV unpaired")

@@ -1,33 +1,26 @@
-"""Settings window: per-phone call volume sliders and audio routing."""
+"""Settings window: the Phones, Call audio and About tabs with a Close button."""
 
-from functools import partial
-
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import (
-    QCheckBox,
-    QFormLayout,
-    QGroupBox,
-    QHBoxLayout,
-    QLabel,
-    QSlider,
-    QVBoxLayout,
-    QWidget,
-)
+from PySide6.QtCore import Signal
+from PySide6.QtGui import QIcon
+from PySide6.QtWidgets import QHBoxLayout, QPushButton, QTabWidget, QVBoxLayout, QWidget
 
 from bt_handsfree_kde import APPLICATION_NAME
 from bt_handsfree_kde.dbus.bluez import PhoneInfo
-from bt_handsfree_kde.dbus.telephony import MAX_VOLUME_LEVEL, MIN_VOLUME_LEVEL, AudioGateway
+from bt_handsfree_kde.dbus.telephony import AudioGateway
+from bt_handsfree_kde.ui.about_page import AboutPage
+from bt_handsfree_kde.ui.call_audio_page import CallAudioPage
+from bt_handsfree_kde.ui.phones_page import PhonesPage
 
-# HFP codec identifiers as reported in `AudioGatewayTransport1.Codec`.
-CODEC_NAMES = {1: "CVSD", 2: "mSBC", 3: "LC3-SWB"}
-# Codec value while no audio link is open.
-NO_CODEC = 0
-# Text shown when the service runs but no phone is connected over HFP.
-NO_PHONE_TEXT = "No phone connected"
+# Theme icon names of the tabs (all present in Breeze).
+PHONES_TAB_ICON = "smartphone"
+CALL_AUDIO_TAB_ICON = "audio-headset"
+ABOUT_TAB_ICON = "help-about"
+# Fixed width of the window in pixels, so the About paragraphs wrap well.
+WINDOW_WIDTH = 480
 
 
 class SettingsWindow(QWidget):
-    """One group of controls per connected phone; rebuilt whenever the gateways change."""
+    """Hosts the three settings tabs; the application pushes state and picks the tab."""
 
     # Emitted with (gateway path, level 0..15) when a slider is released.
     speaker_volume_changed = Signal(str, int)
@@ -36,99 +29,78 @@ class SettingsWindow(QWidget):
     audio_on_computer_changed = Signal(str, bool)
 
     def __init__(self, parent: QWidget | None = None) -> None:
-        """Build the empty window; `update_gateways` fills it."""
+        """Build the tabs; `update_state` fills the Phones and Call audio tabs."""
         super().__init__(parent)
         self.setWindowTitle(f"{APPLICATION_NAME} settings")
-        self._column = QVBoxLayout(self)
-        self._group_boxes: list[QGroupBox] = []
-        self._placeholder_label = QLabel(NO_PHONE_TEXT, self)
-        self._column.addWidget(self._placeholder_label)
+        self.setFixedWidth(WINDOW_WIDTH)
 
-    def update_gateways(
-        self, gateways: list[AudioGateway], phone_info_by_address: dict[str, PhoneInfo]
+        self._phones_page = PhonesPage(self)
+        self._call_audio_page = CallAudioPage(self)
+        self._about_page = AboutPage(self)
+        self._tabs = QTabWidget(self)
+        self._tabs.addTab(self._phones_page, QIcon.fromTheme(PHONES_TAB_ICON), "Phones")
+        self._tabs.addTab(self._call_audio_page, QIcon.fromTheme(CALL_AUDIO_TAB_ICON), "Call audio")
+        self._tabs.addTab(self._about_page, QIcon.fromTheme(ABOUT_TAB_ICON), "About")
+
+        close_button = QPushButton("Close", self)
+        close_button.setDefault(True)
+        button_row = QHBoxLayout()
+        button_row.addStretch()
+        button_row.addWidget(close_button)
+
+        column = QVBoxLayout(self)
+        column.addWidget(self._tabs)
+        column.addLayout(button_row)
+
+        self._call_audio_page.speaker_volume_changed.connect(self.speaker_volume_changed)
+        self._call_audio_page.microphone_volume_changed.connect(self.microphone_volume_changed)
+        self._call_audio_page.audio_on_computer_changed.connect(self.audio_on_computer_changed)
+        close_button.clicked.connect(self.close)
+
+    def update_state(
+        self,
+        is_service_available: bool,
+        gateways: list[AudioGateway],
+        phone_info_by_address: dict[str, PhoneInfo],
+        paired_phones: list[PhoneInfo],
+        is_bluetooth_available: bool,
     ) -> None:
-        """Replace the controls with one group per gateway showing its current values.
+        """Give the Phones and Call audio tabs the current phones.
 
         Args:
+            is_service_available: Whether the telephony service is on the bus.
             gateways: Connected phones as seen by the telephony service.
             phone_info_by_address: BlueZ details keyed by upper-case Bluetooth address.
+            paired_phones: Every paired phone BlueZ knows, in display order.
+            is_bluetooth_available: Whether BlueZ could be reached.
         """
-        for group_box in self._group_boxes:
-            self._column.removeWidget(group_box)
-            group_box.deleteLater()
-        self._group_boxes = []
-
-        has_gateways = bool(gateways)
-        self._placeholder_label.setVisible(not has_gateways)
-
-        for gateway in gateways:
-            address_key = gateway.address.upper()
-            phone_info = phone_info_by_address.get(address_key)
-            group_box = self._build_gateway_group(gateway, phone_info)
-            self._group_boxes.append(group_box)
-            self._column.addWidget(group_box)
-
+        self._phones_page.update_phones(
+            is_service_available,
+            gateways,
+            phone_info_by_address,
+            paired_phones,
+            is_bluetooth_available,
+        )
+        self._call_audio_page.update_gateways(gateways, phone_info_by_address)
         self.adjustSize()
 
-    def _build_gateway_group(
-        self, gateway: AudioGateway, phone_info: PhoneInfo | None
-    ) -> QGroupBox:
-        """Create the controls for one gateway."""
-        title = gateway.address
-        if phone_info is not None and phone_info.alias:
-            title = phone_info.alias
-        group_box = QGroupBox(title, self)
-        form = QFormLayout(group_box)
+    def show_phones(self) -> None:
+        """Open the window on the Phones tab."""
+        self._tabs.setCurrentWidget(self._phones_page)
+        self._bring_to_front()
 
-        speaker_row = self._build_volume_row(
-            group_box, gateway.path, gateway.speaker_volume, self.speaker_volume_changed
-        )
-        form.addRow("Speaker", speaker_row)
+    def show_call_audio(self) -> None:
+        """Open the window on the Call audio tab."""
+        self._tabs.setCurrentWidget(self._call_audio_page)
+        self._bring_to_front()
 
-        microphone_row = self._build_volume_row(
-            group_box, gateway.path, gateway.microphone_volume, self.microphone_volume_changed
-        )
-        form.addRow("Microphone", microphone_row)
+    def show_about(self) -> None:
+        """Open the window on the About tab."""
+        self._tabs.setCurrentWidget(self._about_page)
+        self._bring_to_front()
 
-        audio_checkbox = QCheckBox("Play call audio on this computer", group_box)
-        audio_on_computer = not gateway.reject_sco
-        audio_checkbox.setChecked(audio_on_computer)
-        audio_checkbox.toggled.connect(partial(self.audio_on_computer_changed.emit, gateway.path))
-        form.addRow(audio_checkbox)
-
-        has_audio_link = gateway.codec != NO_CODEC
-        if has_audio_link:
-            codec_name = CODEC_NAMES.get(gateway.codec, f"unknown ({gateway.codec})")
-            form.addRow("Codec", QLabel(codec_name, group_box))
-
-        return group_box
-
-    def _build_volume_row(
-        self, parent: QWidget, gateway_path: str, current_level: int, level_signal: Signal
-    ) -> QWidget:
-        """Create a slider over the HFP range with a live percentage label beside it."""
-        row = QWidget(parent)
-        slider = QSlider(Qt.Orientation.Horizontal, row)
-        slider.setRange(MIN_VOLUME_LEVEL, MAX_VOLUME_LEVEL)
-        slider.setValue(current_level)
-        slider.setTracking(False)
-        percent_label = QLabel(row)
-        percent_label.setText(_percent_text(current_level))
-
-        slider.sliderMoved.connect(lambda level: percent_label.setText(_percent_text(level)))
-        slider.valueChanged.connect(lambda level: percent_label.setText(_percent_text(level)))
-        slider.valueChanged.connect(partial(level_signal.emit, gateway_path))
-
-        row_layout = QHBoxLayout(row)
-        row_layout.setContentsMargins(0, 0, 0, 0)
-        row_layout.addWidget(slider)
-        row_layout.addWidget(percent_label)
-
-        return row
-
-
-def _percent_text(level: int) -> str:
-    """Format an HFP gain level as a percentage string."""
-    percent = round(level * 100 / MAX_VOLUME_LEVEL)
-
-    return f"{percent} %"
+    def _bring_to_front(self) -> None:
+        """Show the window and ask the window manager to raise and activate it."""
+        self.show()
+        self.raise_()
+        self.activateWindow()

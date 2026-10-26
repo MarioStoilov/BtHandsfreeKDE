@@ -1,4 +1,4 @@
-"""Client for the phone's BlueZ device object: name, connection state and battery level."""
+"""Client for BlueZ device objects: name, pairing, connection state and battery level."""
 
 import asyncio
 import logging
@@ -31,12 +31,20 @@ DEVICE_INTERFACE = "org.bluez.Device1"
 BATTERY_INTERFACE = "org.bluez.Battery1"
 # Prefix shared by every BlueZ object path; used to filter signals.
 BLUEZ_PATH_PREFIX = "/org/bluez/"
+# Bluetooth SIG service UUID of the Hands-Free Audio Gateway role, listed in a device's
+# `UUIDs` when it can be a phone to this computer's hands-free unit.
+HANDS_FREE_AUDIO_GATEWAY_UUID = "0000111f-0000-1000-8000-00805f9b34fb"
+# Theme icon used for a phone whose BlueZ entry names no icon.
+DEFAULT_PHONE_ICON_NAME = "smartphone"
 
-# Dataclass field written by each D-Bus property, per interface.
+# Dataclass field written by each D-Bus property, per interface; properties that need a
+# conversion (`UUIDs`) are handled separately.
 DEVICE_FIELD_BY_PROPERTY = {
     "Address": "address",
     "Alias": "alias",
     "Connected": "connected",
+    "Paired": "paired",
+    "Icon": "icon_name",
 }
 BATTERY_FIELD_BY_PROPERTY = {
     "Percentage": "battery_percentage",
@@ -45,20 +53,35 @@ BATTERY_FIELD_BY_PROPERTY = {
 
 @dataclass(frozen=True)
 class PhoneInfo:
-    """What BlueZ knows about one paired device."""
+    """What BlueZ knows about one device it has seen or paired with."""
 
     path: str
     address: str
     alias: str
     connected: bool
     battery_percentage: int | None
+    # Whether the device is paired with this computer; BlueZ also lists devices it
+    # merely discovered, which are never shown as phones.
+    paired: bool = False
+    # Whether the device offers the Hands-Free Audio Gateway service, i.e. can act as
+    # the phone side of a hands-free link.
+    is_hands_free_capable: bool = False
+    # Freedesktop icon name BlueZ derives from the device class (`phone` for phones);
+    # empty when BlueZ names none.
+    icon_name: str = ""
+
+    @property
+    def is_phone(self) -> bool:
+        """Tell whether the device is a paired phone, the only kind the UI lists."""
+        return self.paired and self.is_hands_free_capable
 
 
 class PhoneInfoClient(QObject):
     """Mirrors BlueZ device objects so the UI can show phone name, state and battery.
 
     Tracks every device BlueZ manages, which keeps the address-to-object mapping trivial;
-    the application looks up only the addresses of active audio gateways.
+    the application looks up the addresses of active audio gateways and lists the
+    paired phones for the settings window.
     """
 
     # Emitted with a `PhoneInfo` whenever a device appears, disappears or changes.
@@ -75,6 +98,22 @@ class PhoneInfoClient(QObject):
     def is_available(self) -> bool:
         """Tell whether BlueZ could be reached on the system bus."""
         return self._is_available
+
+    def paired_phones(self) -> list[PhoneInfo]:
+        """Return every paired device that can be a hands-free gateway, sorted by alias.
+
+        Devices BlueZ only discovered, and paired devices without the Hands-Free Audio
+        Gateway service (headsets, TVs, speakers), are left out. The result is empty
+        while BlueZ is unreachable.
+        """
+        phones: list[PhoneInfo] = []
+        for device in self._devices_by_path.values():
+            if device.is_phone:
+                phones.append(device)
+
+        phones.sort(key=_phone_sort_key)
+
+        return phones
 
     def info_for_address(self, address: str) -> PhoneInfo | None:
         """Return the device with Bluetooth `address`, comparing case-insensitively."""
@@ -260,6 +299,9 @@ class PhoneInfoClient(QObject):
                 field_name = DEVICE_FIELD_BY_PROPERTY.get(property_name)
                 if field_name is not None:
                     field_updates[field_name] = property_value
+            service_uuids = changed_properties.get("UUIDs")
+            if service_uuids is not None:
+                field_updates["is_hands_free_capable"] = _offers_hands_free_gateway(service_uuids)
         elif changed_interface == BATTERY_INTERFACE:
             percentage = changed_properties.get("Percentage")
             if percentage is not None:
@@ -279,6 +321,24 @@ def _optional_int(value: Any) -> int | None:
     return int(value)
 
 
+def _offers_hands_free_gateway(service_uuids: Any) -> bool:
+    """Tell whether a device's `UUIDs` list names the Hands-Free Audio Gateway service."""
+    for service_uuid in service_uuids:
+        normalised_uuid = str(service_uuid).lower()
+        if normalised_uuid == HANDS_FREE_AUDIO_GATEWAY_UUID:
+            return True
+
+    return False
+
+
+def _phone_sort_key(phone_info: PhoneInfo) -> tuple[str, str]:
+    """Order phones by alias, case-insensitively, then by address for a stable list."""
+    alias_key = phone_info.alias.casefold()
+    address_key = phone_info.address.upper()
+
+    return (alias_key, address_key)
+
+
 def _build_phone_info(object_path: str, interfaces: dict[str, dict[str, Any]]) -> PhoneInfo:
     """Create a `PhoneInfo` from an object manager entry (variants already unwrapped)."""
     device_properties = interfaces.get(DEVICE_INTERFACE, {})
@@ -287,6 +347,9 @@ def _build_phone_info(object_path: str, interfaces: dict[str, dict[str, Any]]) -
     address = device_properties.get("Address", "")
     alias = device_properties.get("Alias", "")
     connected = device_properties.get("Connected", False)
+    paired = device_properties.get("Paired", False)
+    icon_name = device_properties.get("Icon", "")
+    service_uuids = device_properties.get("UUIDs", [])
     percentage = battery_properties.get("Percentage")
 
     return PhoneInfo(
@@ -295,4 +358,7 @@ def _build_phone_info(object_path: str, interfaces: dict[str, dict[str, Any]]) -
         alias=str(alias),
         connected=bool(connected),
         battery_percentage=_optional_int(percentage),
+        paired=bool(paired),
+        is_hands_free_capable=_offers_hands_free_gateway(service_uuids),
+        icon_name=str(icon_name),
     )

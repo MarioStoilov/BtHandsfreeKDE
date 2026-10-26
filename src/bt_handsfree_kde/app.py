@@ -45,7 +45,6 @@ from bt_handsfree_kde.messages.client import MessagesClient, MessagesState
 from bt_handsfree_kde.messages.conversations import Conversation, group_conversations
 from bt_handsfree_kde.messages.message import TextMessage
 from bt_handsfree_kde.phone_numbers import number_from_tel_uri
-from bt_handsfree_kde.ui.about_window import AboutWindow
 from bt_handsfree_kde.ui.call_window import CallWindow
 from bt_handsfree_kde.ui.dependencies_window import DependenciesWindow
 from bt_handsfree_kde.ui.main_window import MainWindow
@@ -122,7 +121,6 @@ class HandsfreeApplication(QObject):
         self._call_window = CallWindow()
         self._settings_window = SettingsWindow()
         self._main_window = MainWindow()
-        self._about_window = AboutWindow()
         self._dependencies_window = DependenciesWindow()
         self._status_timer = QTimer(self)
         self._status_timer.setInterval(CALL_STATUS_REFRESH_INTERVAL_MS)
@@ -193,11 +191,11 @@ class HandsfreeApplication(QObject):
         self._tray.hangup_requested.connect(self._hangup_call)
         self._tray.hold_requested.connect(self._toggle_hold_on_gateway)
         self._tray.audio_on_computer_toggled.connect(self._set_audio_on_computer)
-        self._tray.settings_requested.connect(self._show_settings)
+        self._tray.settings_requested.connect(self._settings_window.show_phones)
+        self._tray.call_audio_settings_requested.connect(self._settings_window.show_call_audio)
         self._tray.dialpad_requested.connect(self._show_dialpad)
         self._tray.contacts_requested.connect(self._show_contacts)
         self._tray.messages_requested.connect(self._show_messages)
-        self._tray.about_requested.connect(self._about_window.show_and_raise)
         self._tray.requirements_requested.connect(self._dependencies_window.show_and_raise)
         self._tray.call_focus_requested.connect(self._focus_call)
 
@@ -431,10 +429,17 @@ class HandsfreeApplication(QObject):
         self._refresh_views()
 
     def _on_phone_info_changed(self, phone_info: PhoneInfo) -> None:
-        """Redraw when a phone that has a gateway changes name, state or battery."""
+        """Redraw when a BlueZ device changes.
+
+        A change on a phone that has a gateway touches the tray, the main window and
+        the settings window; any other device can only change the paired-phones list
+        of the settings window (pairing, renaming, removal), so only that is rebuilt.
+        """
         address_key = phone_info.address.upper()
         if address_key in self._known_gateway_addresses:
             self._refresh_views()
+        else:
+            self._refresh_settings()
 
     def _on_notification_action(self, subject_key: str, action_key: str) -> None:
         """Route a pressed notification button to the matching call or message action."""
@@ -639,9 +644,16 @@ class HandsfreeApplication(QObject):
         return None
 
     def _refresh_settings(self) -> None:
-        """Rebuild the settings window for the current gateways."""
+        """Rebuild the settings window for the current gateways and paired phones."""
         phone_info_by_address = self._phone_info_by_address()
-        self._settings_window.update_gateways(self._telephony.gateways, phone_info_by_address)
+        paired_phones = self._phones.paired_phones()
+        self._settings_window.update_state(
+            self._telephony.is_available,
+            self._telephony.gateways,
+            phone_info_by_address,
+            paired_phones,
+            self._phones.is_available,
+        )
 
     def _refresh_main_window(self) -> None:
         """Give the main window the phones, their calls, phonebooks and conversations."""
@@ -670,12 +682,6 @@ class HandsfreeApplication(QObject):
             messages_state_by_gateway_path,
             conversations_by_gateway_path,
         )
-
-    def _show_settings(self) -> None:
-        """Open or raise the settings window."""
-        self._settings_window.show()
-        self._settings_window.raise_()
-        self._settings_window.activateWindow()
 
     def _show_dialpad(self, number: str = "") -> None:
         """Open or raise the main window on the Dialpad tab, prefilled when a number is given."""

@@ -237,6 +237,48 @@ depends on and keeps running with whatever works:
   the window, sends the notification and ends the tooltip with "Missing: Bluetooth
   daemon (BlueZ)" while calls, contacts and messages keep working.
 
+### 8. Settings panel
+
+Defined 2026-10-26 (build step 13). One window, "BT Handsfree settings"
+(`ui/settings_window.py`), replaces the earlier separate settings and About windows. It
+has three tabs and a Close button; the tray opens it on the tab that matches the entry
+clicked.
+
+- **Phones** (`ui/phones_page.py`): two groups. "Connected now" lists every telephony
+  gateway: the phone's icon, its BlueZ alias (the address when BlueZ has no entry),
+  the Bluetooth address and the battery percentage when BlueZ reports one.
+  "Previously connected" lists the phones paired with this computer that have no
+  gateway right now, with alias, address and either "Connected, no hands-free link"
+  (BlueZ says connected, so the phone reaches the computer but PipeWire has no HFP
+  link to it) or "Not connected". Each group has an empty-state line ("No phone
+  connected", "No other phone is paired") and, while BlueZ is unreachable, says
+  "Bluetooth service not available".
+- Source of the history: BlueZ's own pairing list, so the app persists nothing. A
+  device counts as a phone when its `org.bluez.Device1` has `Paired` true and
+  `UUIDs` contains the Hands-Free Audio Gateway service
+  (`0000111f-0000-1000-8000-00805f9b34fb`). Verified on the host (2026-10-26): seven
+  device objects, of which three TVs advertise the same UUID but are unpaired, and
+  only the phone passes both tests. The `Icon` property (a freedesktop icon name such
+  as `phone`) picks the row icon, with `smartphone` as the fallback. BlueZ does not
+  put a last-connected time on D-Bus (it stays in its root-only storage), so the list
+  is ordered by name and carries no dates. The list follows BlueZ's signals, so
+  pairing or removing a phone in the system Bluetooth settings updates it at once.
+- **Call audio** (`ui/call_audio_page.py`): what the settings window held before: one
+  group per connected phone with a speaker slider and a microphone slider over the
+  HFP gain range (0–15, shown as %), the "Play call audio on this computer" checkbox
+  and the negotiated codec while an audio link is open.
+- **About** (`ui/about_page.py`): the About content unchanged: application icon,
+  name, version from `__version__`, the one-line description, links to the
+  repository, the issue tracker and the MIT license, the copyright line and the
+  vibe-coded disclosure from the README.
+- Tray: a "Settings…" entry below Messages replaces "About BT Handsfree" and opens
+  the Phones tab; the "Speaker N %" and "Microphone N %" entries open the Call audio
+  tab.
+- Backend: `dbus/bluez.py` reads `Paired`, `Icon` and `UUIDs` next to the properties
+  it already tracked and offers the paired phones as a list; nothing new is read from
+  any other service, and the Flatpak manifest is unchanged (`org.bluez` was already
+  allowed on the system bus).
+
 ## Tray icon and menu
 
 - The icon reflects call state (idle, incoming, active). The tooltip shows the phone's
@@ -260,21 +302,16 @@ depends on and keeps running with whatever works:
     either opens the settings window) and the "Call audio on this computer" checkmark
     toggle (`AudioGatewayTransport1.RejectSCO` / `Activate`)
   - after the phone sections, the tabs of the main window: Dialpad, Contacts,
-    Messages (with the unread count in its label when there is one)
+    Messages (with the unread count in its label when there is one), then "Settings…"
   - Quit
 - The Dialpad, Messages and Contacts windows are tabs of one window (`ui/main_window.py`);
   a menu entry opens it on that tab, and the `tel:` hand-off opens the Dialpad tab. A
   phone chooser sits above the tabs and is shown only when several phones are
   connected; every tab acts on the chosen phone.
-- **Settings window**: one group per connected phone with a speaker slider and a
-  microphone slider over the HFP gain range (0–15, shown as %), the audio routing
-  checkbox and the negotiated codec while an audio link is open.
-- **About window** (`ui/about_window.py`, tray entry "About BT Handsfree" below
-  Messages): application icon, name, version from `__version__`, the one-line
-  description, links to the repository, the issue tracker and the MIT license, the
-  copyright line, the vibe-coded disclosure from the README, and a Close button. The
-  URLs live once in `bt_handsfree_kde/__init__.py` and are mirrored in pyproject.toml
-  and the MetaInfo file.
+- **Settings window**: the Phones, Call audio and About tabs described under
+  "Settings panel" in Features. The URLs on the About tab live once in
+  `bt_handsfree_kde/__init__.py` and are mirrored in pyproject.toml and the MetaInfo
+  file.
 
 ## Known shortcomings
 
@@ -285,6 +322,17 @@ depends on and keeps running with whatever works:
   phone's cellular signal. The tray therefore shows battery only. Adding a
   `SignalStrength` property upstream in PipeWire would close this; until such a version
   exists, nothing in the UI refers to reception.
+- **No charging indicator for the phone's battery.** Over HFP the phone (the audio
+  gateway) reports its battery only through the `battchg` indicator, an integer 0–5
+  with no charging flag; the HFP specification defines no other battery indicator in
+  that direction. PipeWire's native backend scales it to a percentage in steps of
+  20 and hands it to BlueZ's battery provider, whose `org.bluez.Battery1` carries
+  `Percentage` and `Source` only. UPower mirrors that object with an unknown state.
+  The Apple (`+IPHONEACCEV`) and Plantronics (`+XEVENT`) extensions that PipeWire
+  parses carry a headset's battery towards a phone, the opposite direction, so they
+  cannot help. The UI therefore shows the percentage alone and never a charging
+  state. Verified on 2026-10-26 against PipeWire 1.6.2 `backend-native.c`, BlueZ
+  5.85 and UPower on the development host.
 - **iOS messaging is limited** as described under Messages.
 - **Call audio codec** is whatever PipeWire negotiated (CVSD or mSBC); the app displays it
   but cannot change it.
@@ -314,7 +362,8 @@ is reported done.
    with the application icon, name and version, the one-line description, links to
    the repository, the issue tracker and the MIT license text, the vibe-coded
    disclosure from the README, and a Close button, in the shape of simpleStonks' about
-   dialog. Version comes from `__version__`.
+   dialog. Version comes from `__version__`. Since step 13 this content is the About
+   tab of the settings window.
 6. **Platform note.** README and the MetaInfo description state that every feature was
    developed and tested against one Android phone (Samsung, One UI) and that iOS is
    untested: the D-Bus surface is the same, but caller-name delivery, the contact and
@@ -392,6 +441,31 @@ is reported done.
     scheme, and a locally exported bundle installs and runs. Done when the workflow
     has produced the bundle for a pushed tag and that bundle installs and runs from
     the release page.
+
+12. **Charging indicator investigation.** Find out whether the phone's charging state
+    can be shown next to its battery percentage. Outcome (2026-10-26): it cannot; the
+    reasons are recorded under Known shortcomings, "No charging indicator", and the
+    UI omits the item. Done.
+13. **Settings panel.** One window that houses what was spread over the settings
+    and About windows: the per-phone speaker and microphone sliders, audio routing
+    and codec; the About content; the phones currently connected; and the phones
+    that were connected before, taken from BlueZ's pairing list so the app stores
+    nothing (decided 2026-10-26 over an app-kept history). Defined under "Settings
+    panel" in Features. Observed on the host (2026-10-26): with the phone linked,
+    the Phones tab lists it under "Connected now" with address and battery and says
+    "No other phone is paired" below; disconnecting the phone from the computer
+    moves it to "Previously connected · Not connected" within a second, and
+    reconnecting moves it back with the battery restored; the Call audio tab shows
+    the sliders and the routing checkbox; "Settings…" and the volume entries open
+    the matching tab. The sandbox needs no new permission, so the Flatpak was not
+    rebuilt for this step. Done.
+14. **Contact names in the call window.** On an outgoing or incoming call whose number
+    is in the synced phonebook, the call window shows the contact's name instead of
+    the bare number. Definition and the cause are written under Features before the
+    work starts.
+15. **Audio device choice.** Next to the volume and microphone settings, a choice of
+    which of the computer's speakers and microphones carry the call audio. Definition
+    and the mapping onto PipeWire are written under Features before the work starts.
 
 Later, unscheduled: sending messages, reception once PipeWire exposes it.
 

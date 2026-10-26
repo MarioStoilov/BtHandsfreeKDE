@@ -81,6 +81,7 @@ async def test_tray_registers_and_serves_the_menu(
         "Messages (3 unread)" in labels
         and "Dialpad" in labels
         and "Contacts" in labels
+        and "Settings…" in labels
         and "Quit" in labels
     )
 
