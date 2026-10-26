@@ -21,7 +21,8 @@ class Phonebook:
         """Return the name of the contact that has `number`, or an empty string.
 
         Numbers are compared by digits only; a national form matches its international
-        form when they share a suffix of at least `MIN_MATCHING_SUFFIX_DIGITS` digits.
+        form when they share a suffix of at least `MIN_MATCHING_SUFFIX_DIGITS` digits,
+        a leading national trunk `0` set aside (see `same_number`).
         """
         wanted_digits = digits_of(number)
         if not wanted_digits:

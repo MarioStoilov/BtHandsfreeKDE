@@ -71,9 +71,15 @@ conversation on 2026-09-19 and are changed here, not in code comments.
   honoured, numbers delivered as bare digits with or without `+`, types `CELL`,
   `VOICE`, `HOME` with `PREF`.
 - Caller ID: HFP delivers numbers only on most phones, so a call whose `Name` is empty
-  gets its name from the phonebook of the gateway carrying it. Numbers match by digits;
-  a national form matches an international one when one ends with the other and the
-  shorter has at least seven digits. The lookup is applied wherever a call reaches a
+  gets its name from the phonebook of the gateway carrying it (PipeWire never fills
+  `Name`; verified in its 1.6.2 source on 2026-10-26). Numbers match by digits; a
+  national form matches an international one when one ends with the other, or with
+  the other minus its leading national trunk `0`, and what is compared has at least
+  seven digits. The trunk rule was added on 2026-10-26 (build step 14): the phone
+  reports callers and message senders in international form (`+359…`), while a
+  contact may be stored nationally (`0888…`), whose digits are not a suffix of the
+  international ones; on the development phone about half of the phonebook was
+  stored that way and never matched. The lookup is applied wherever a call reaches a
   view (notification, call window, tray, dialpad status), and views are redrawn when a
   phonebook arrives during a call.
 - Sandbox: `--talk-name=org.bluez.obex`.
@@ -461,8 +467,15 @@ is reported done.
     rebuilt for this step. Done.
 14. **Contact names in the call window.** On an outgoing or incoming call whose number
     is in the synced phonebook, the call window shows the contact's name instead of
-    the bare number. Definition and the cause are written under Features before the
-    work starts.
+    the bare number. Cause (2026-10-26): the number-matching rule required the
+    national form to be a digit suffix of the international one, which fails for
+    every contact stored with a national trunk `0`; the rule now sets that `0`
+    aside. Defined under Contacts sync, "Caller ID". Verified on the host against
+    the live phonebook and message list without placing a call (2026-10-26): the
+    phonebook held 104 international and 83 national numbers, and an international
+    message sender that matched no contact before resolves to one now; the lookup is
+    shared by calls, notifications and conversations. The call window itself was
+    not exercised with a live call; that stays under Pending verifications.
 15. **Audio device choice.** Next to the volume and microphone settings, a choice of
     which of the computer's speakers and microphones carry the call audio. Definition
     and the mapping onto PipeWire are written under Features before the work starts.
@@ -479,10 +492,11 @@ is done and the observed outcome has been stated.
 Behaviour that is implemented but has not yet been exercised against a real phone or
 the sandbox. Each is checked at the next opportunity that provides what it needs.
 
-- **Caller ID on a live incoming call** (step 3): a call from a number in the synced
-  phonebook, arriving with an empty HFP `Name`, shows the contact's name in the
-  notification, the call window and the tray. Needs a caller who is in the phone's
-  contacts.
+- **Caller ID on a live incoming call** (steps 3 and 14): a call from a number in
+  the synced phonebook, arriving with an empty HFP `Name`, shows the contact's name
+  in the notification, the call window and the tray, including a contact stored in
+  national form (`0…`) when the phone reports the international number. Needs a
+  caller who is in the phone's contacts, or an outgoing call to one.
 - **Contacts tab actions on the live phonebook** (step 3): Refresh re-pulls and updates
   the status line; Call on a contact with several numbers offers the number menu and
   dials the chosen one. Exercised offscreen with synthetic vCards only.

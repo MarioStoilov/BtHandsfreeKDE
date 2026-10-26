@@ -22,6 +22,11 @@ AUTHORITY_MARKER = "//"
 # Two numbers are the same when one ends with the other and the shorter has at least
 # this many digits; this matches national and international forms of one number.
 MIN_MATCHING_SUFFIX_DIGITS = 7
+# Digit most countries put in front of a national number and drop in the international
+# form (0888… at home is +359888… abroad). It is removed from the shorter number when
+# the plain suffix test fails, so a contact stored nationally matches the international
+# number the phone reports for a call or a message.
+NATIONAL_TRUNK_PREFIX = "0"
 
 
 def dial_string_from_text(text: str) -> str:
@@ -88,6 +93,11 @@ def digits_of(number: str) -> str:
 def same_number(first_digits: str, second_digits: str) -> bool:
     """Tell whether two digit strings denote the same number, allowing a country prefix.
 
+    The shorter number matches when the longer one ends with it, or with it minus a
+    leading national trunk `0`, and what is compared has at least
+    `MIN_MATCHING_SUFFIX_DIGITS` digits. Two numbers of the same length never match
+    unless they are equal.
+
     Args:
         first_digits: Digits only, as returned by `digits_of`.
         second_digits: Digits only, as returned by `digits_of`.
@@ -96,6 +106,19 @@ def same_number(first_digits: str, second_digits: str) -> bool:
         return True
 
     shorter_digits, longer_digits = sorted((first_digits, second_digits), key=len)
-    is_long_enough = len(shorter_digits) >= MIN_MATCHING_SUFFIX_DIGITS
+    has_trunk_prefix = shorter_digits.startswith(NATIONAL_TRUNK_PREFIX)
+    national_digits = shorter_digits.removeprefix(NATIONAL_TRUNK_PREFIX)
 
-    return is_long_enough and longer_digits.endswith(shorter_digits)
+    is_suffix = len(shorter_digits) >= MIN_MATCHING_SUFFIX_DIGITS and longer_digits.endswith(
+        shorter_digits
+    )
+    if is_suffix:
+        return True
+
+    is_suffix_without_trunk = (
+        has_trunk_prefix
+        and len(national_digits) >= MIN_MATCHING_SUFFIX_DIGITS
+        and longer_digits.endswith(national_digits)
+    )
+
+    return is_suffix_without_trunk

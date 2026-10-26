@@ -59,6 +59,15 @@ def test_digits_of_drops_everything_but_digits() -> None:
         ("0100", "15550100", False),
         ("15550100", "15550199", False),
         ("", "15550100", False),
+        # A national number with its trunk 0 against the international form the phone
+        # reports (fictional UK number): the 0 is set aside, the rest must still match.
+        ("02079460100", "442079460100", True),
+        ("442079460100", "02079460100", True),
+        ("02079460100", "442079460199", False),
+        # The trunk 0 is never dropped from the longer number, and the shorter number
+        # must still have enough digits after it.
+        ("2079460100", "02079460100", True),
+        ("0460100", "442079460100", False),
     ],
 )
 def test_same_number_allows_a_country_prefix(first: str, second: str, expected: bool) -> None:
