@@ -8,7 +8,7 @@ APPLICATION_NAME = "BT Handsfree"
 # One-sentence description shown by `--help` and the About window.
 APPLICATION_DESCRIPTION = "Bluetooth hands-free call controller for the KDE Plasma system tray."
 # Package version, mirrored in pyproject.toml and the MetaInfo release list.
-__version__ = "0.1.2"
+__version__ = "0.2.0"
 # Where the code lives, where to report problems and where the license text is; shown
 # as links in the About window and mirrored in pyproject.toml and the MetaInfo file.
 REPOSITORY_URL = "https://github.com/MarioStoilov/BtHandsfreeKDE"

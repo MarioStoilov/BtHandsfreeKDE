@@ -89,7 +89,7 @@ flatpak-builder --user --install --force-clean build-dir flatpak/io.github.Mario
 flatpak run io.github.MarioStoilov.BtHandsfreeKDE
 flatpak run --command=flatpak-builder-lint org.flatpak.Builder manifest flatpak/io.github.MarioStoilov.BtHandsfreeKDE.yml
 flatpak-builder --user --force-clean --default-branch=stable --repo=repo build-dir flatpak/io.github.MarioStoilov.BtHandsfreeKDE.yml
-flatpak build-bundle --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo repo bt-handsfree-kde-0.1.2-x86_64.flatpak io.github.MarioStoilov.BtHandsfreeKDE stable
+flatpak build-bundle --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo repo bt-handsfree-kde-0.2.0-x86_64.flatpak io.github.MarioStoilov.BtHandsfreeKDE stable
                                                 # the two lines above are what the release workflow runs
 busctl --user call org.pipewire.Telephony /org/pipewire/Telephony org.freedesktop.DBus.ObjectManager GetManagedObjects
                                                 # inspect the live telephony objects while debugging
